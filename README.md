@@ -21,7 +21,7 @@ View your app in AI Studio: https://ai.studio/apps/ee53b1ec-0db7-4156-9a7d-225f6
    - Put the deployed Web App URL into `.env.local`:
 
 ```bash
-VITE_GAS_URL="https://script.google.com/macros/s/XXXX/exec"
+VITE_GAS_URL="https://script.google.com/macros/s/AKfycbxQMHx8YRSomcNyRll6q1aCAT2bQsRjXEuL5Ap2iP7N_8Oaq0yfvLpki4BZGwd5cp7sSQ/exec"
 ```
 
 4. Run the app:

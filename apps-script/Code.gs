@@ -14,6 +14,12 @@
 
 var TAB_EVENTS = 'events';
 var TAB_ADMINS = 'admins';
+var TAB_TASKS = 'tasks';
+var TAB_EMPLOYEES = 'employees';
+var TAB_VEHICLES = 'vehicles';
+var TAB_CONTACTS = 'contacts';
+
+var PROP_UPDATED_AT = 'SNAPSHOT_UPDATED_AT';
 
 function doGet(e) {
   var action = (e && e.parameter && e.parameter.action) || 'state';
@@ -38,6 +44,8 @@ function doPost(e) {
     if (body.action !== 'event' || !body.event) {
       return respond_(null, { error: 'Invalid request' }, 400);
     }
+    // Write-through: update snapshot tabs + append log event
+    applyEventToSnapshot_(body.event);
     appendEvent_(body.event);
     return respond_(null, { ok: true });
   } catch (err) {
@@ -87,6 +95,26 @@ function ensureAdminsTab_() {
   return sh;
 }
 
+function ensureListTab_(tabName, headerName) {
+  var ss = getSheet_();
+  var sh = ss.getSheetByName(tabName);
+  if (!sh) sh = ss.insertSheet(tabName);
+  if (sh.getLastRow() === 0) {
+    sh.appendRow([headerName || 'name', 'updatedAt']);
+  }
+  return sh;
+}
+
+function ensureKvJsonTab_(tabName, keyHeader) {
+  var ss = getSheet_();
+  var sh = ss.getSheetByName(tabName);
+  if (!sh) sh = ss.insertSheet(tabName);
+  if (sh.getLastRow() === 0) {
+    sh.appendRow([keyHeader || 'id', 'json', 'updatedAt']);
+  }
+  return sh;
+}
+
 function appendEvent_(event) {
   var sh = ensureEventsTab_();
   var ts = new Date().toISOString();
@@ -100,6 +128,234 @@ function appendEvent_(event) {
   if (entity === 'admins') {
     syncAdminsSheet_();
   }
+}
+
+function touchUpdatedAt_() {
+  try {
+    PropertiesService.getScriptProperties().setProperty(PROP_UPDATED_AT, new Date().toISOString());
+  } catch (e) {
+    // ignore
+  }
+}
+
+function applyEventToSnapshot_(event) {
+  ensureAdminsTab_();
+  ensureListTab_(TAB_EMPLOYEES, 'name');
+  ensureListTab_(TAB_VEHICLES, 'name');
+  ensureKvJsonTab_(TAB_TASKS, 'id');
+  ensureKvJsonTab_(TAB_CONTACTS, 'id');
+
+  var entity = String(event.entity || '');
+  var action = String(event.action || '');
+  var payload = event.payload || {};
+
+  if (entity === 'employees') {
+    if (action === 'import' && payload && payload.employees) {
+      replaceListTab_(TAB_EMPLOYEES, payload.employees);
+      touchUpdatedAt_();
+      return;
+    }
+    if (action === 'upsert' && payload && payload.name) {
+      upsertListTab_(TAB_EMPLOYEES, String(payload.name));
+      touchUpdatedAt_();
+      return;
+    }
+    if (action === 'delete' && payload && payload.name) {
+      deleteFromListTab_(TAB_EMPLOYEES, String(payload.name));
+      touchUpdatedAt_();
+      return;
+    }
+  }
+
+  if (entity === 'vehicles') {
+    if (action === 'import' && payload && payload.vehicles) {
+      replaceListTab_(TAB_VEHICLES, payload.vehicles);
+      touchUpdatedAt_();
+      return;
+    }
+    if (action === 'upsert' && payload && payload.name) {
+      upsertListTab_(TAB_VEHICLES, String(payload.name));
+      touchUpdatedAt_();
+      return;
+    }
+    if (action === 'delete' && payload && payload.name) {
+      deleteFromListTab_(TAB_VEHICLES, String(payload.name));
+      touchUpdatedAt_();
+      return;
+    }
+  }
+
+  if (entity === 'admins') {
+    // admins snapshot is handled by syncAdminsSheet_ from events,
+    // but we also touch updatedAt for quick polling
+    if (action === 'upsert' || action === 'delete' || action === 'import') touchUpdatedAt_();
+    return;
+  }
+
+  if (entity === 'tasks') {
+    if (action === 'import' && payload && payload.tasks) {
+      replaceKvJsonTab_(TAB_TASKS, payload.tasks, 'id');
+      touchUpdatedAt_();
+      return;
+    }
+    if (action === 'upsert' && payload && payload.id) {
+      upsertKvJsonTab_(TAB_TASKS, String(payload.id), payload);
+      touchUpdatedAt_();
+      return;
+    }
+    if (action === 'delete' && payload && payload.id) {
+      deleteKvJsonTab_(TAB_TASKS, String(payload.id));
+      touchUpdatedAt_();
+      return;
+    }
+  }
+
+  if (entity === 'contacts') {
+    if (action === 'import' && payload && payload.contacts) {
+      replaceKvJsonTab_(TAB_CONTACTS, payload.contacts, 'id');
+      touchUpdatedAt_();
+      return;
+    }
+    if (action === 'upsert' && payload && payload.id) {
+      upsertKvJsonTab_(TAB_CONTACTS, String(payload.id), payload);
+      touchUpdatedAt_();
+      return;
+    }
+    if (action === 'delete' && payload && payload.id) {
+      deleteKvJsonTab_(TAB_CONTACTS, String(payload.id));
+      touchUpdatedAt_();
+      return;
+    }
+  }
+}
+
+function getUpdatedAt_() {
+  try {
+    var v = PropertiesService.getScriptProperties().getProperty(PROP_UPDATED_AT);
+    return v || '';
+  } catch (e) {
+    return '';
+  }
+}
+
+function readListTab_(tabName) {
+  var sh = ensureListTab_(tabName, 'name');
+  var values = sh.getDataRange().getValues();
+  var rows = values.length > 1 ? values.slice(1) : [];
+  var out = [];
+  rows.forEach(function (r) {
+    var name = String(r[0] || '').trim();
+    if (name) out.push(name);
+  });
+  // stable order
+  out.sort();
+  return out;
+}
+
+function readKvJsonTab_(tabName) {
+  var sh = ensureKvJsonTab_(tabName, 'id');
+  var values = sh.getDataRange().getValues();
+  var rows = values.length > 1 ? values.slice(1) : [];
+  var out = [];
+  rows.forEach(function (r) {
+    var json = String(r[1] || '').trim();
+    if (!json) return;
+    try {
+      out.push(JSON.parse(json));
+    } catch (e) {
+      // ignore bad rows
+    }
+  });
+  return out;
+}
+
+function upsertListTab_(tabName, name) {
+  var sh = ensureListTab_(tabName, 'name');
+  var values = sh.getDataRange().getValues();
+  var rows = values.length > 1 ? values.slice(1) : [];
+  var now = new Date().toISOString();
+  for (var i = 0; i < rows.length; i++) {
+    if (String(rows[i][0] || '') === name) {
+      sh.getRange(i + 2, 2).setValue(now);
+      return;
+    }
+  }
+  sh.appendRow([name, now]);
+}
+
+function deleteFromListTab_(tabName, name) {
+  var sh = ensureListTab_(tabName, 'name');
+  var values = sh.getDataRange().getValues();
+  var rows = values.length > 1 ? values.slice(1) : [];
+  for (var i = 0; i < rows.length; i++) {
+    if (String(rows[i][0] || '') === name) {
+      sh.deleteRow(i + 2);
+      return;
+    }
+  }
+}
+
+function replaceListTab_(tabName, list) {
+  var sh = ensureListTab_(tabName, 'name');
+  var now = new Date().toISOString();
+  var rows = (list || [])
+    .map(function (x) {
+      var name = String(x || '').trim();
+      return name ? [name, now] : null;
+    })
+    .filter(function (x) {
+      return x;
+    });
+  // Clear old rows (keep header)
+  var last = sh.getLastRow();
+  if (last > 1) sh.getRange(2, 1, last - 1, 2).clearContent();
+  if (rows.length) sh.getRange(2, 1, rows.length, 2).setValues(rows);
+}
+
+function upsertKvJsonTab_(tabName, id, obj) {
+  var sh = ensureKvJsonTab_(tabName, 'id');
+  var values = sh.getDataRange().getValues();
+  var rows = values.length > 1 ? values.slice(1) : [];
+  var now = new Date().toISOString();
+  var json = JSON.stringify(obj || {});
+  for (var i = 0; i < rows.length; i++) {
+    if (String(rows[i][0] || '') === id) {
+      sh.getRange(i + 2, 2).setValue(json);
+      sh.getRange(i + 2, 3).setValue(now);
+      return;
+    }
+  }
+  sh.appendRow([id, json, now]);
+}
+
+function deleteKvJsonTab_(tabName, id) {
+  var sh = ensureKvJsonTab_(tabName, 'id');
+  var values = sh.getDataRange().getValues();
+  var rows = values.length > 1 ? values.slice(1) : [];
+  for (var i = 0; i < rows.length; i++) {
+    if (String(rows[i][0] || '') === id) {
+      sh.deleteRow(i + 2);
+      return;
+    }
+  }
+}
+
+function replaceKvJsonTab_(tabName, items, idKey) {
+  var sh = ensureKvJsonTab_(tabName, 'id');
+  var now = new Date().toISOString();
+  var rows = (items || [])
+    .map(function (x) {
+      if (!x) return null;
+      var id = x[idKey || 'id'];
+      if (!id) return null;
+      return [String(id), JSON.stringify(x), now];
+    })
+    .filter(function (x) {
+      return x;
+    });
+  var last = sh.getLastRow();
+  if (last > 1) sh.getRange(2, 1, last - 1, 3).clearContent();
+  if (rows.length) sh.getRange(2, 1, rows.length, 3).setValues(rows);
 }
 
 function getAdminsMapFromEvents_() {
@@ -147,138 +403,30 @@ function syncAdminsSheet_() {
 }
 
 function buildState_() {
-  var sh = ensureEventsTab_();
-  var values = sh.getDataRange().getValues();
-  if (values.length <= 1) {
-    // Ensure snapshot tab exists
-    ensureAdminsTab_();
-    // Keep admins snapshot in sync even when empty
-    syncAdminsSheet_();
-    return { tasks: [], employees: [], vehicles: [], contacts: [], admins: ['admin'] };
-  }
-  var rows = values.slice(1);
+  // Snapshot-first: hard 2-way sync (sheet is source of truth)
+  // Ensure tabs exist
+  ensureAdminsTab_();
+  ensureListTab_(TAB_EMPLOYEES, 'name');
+  ensureListTab_(TAB_VEHICLES, 'name');
+  ensureKvJsonTab_(TAB_TASKS, 'id');
+  ensureKvJsonTab_(TAB_CONTACTS, 'id');
 
-  var tasksById = {};
-  var employees = {};
-  var vehicles = {};
-  var contactsById = {};
-  var adminsByUser = { admin: { username: 'admin', password: 'admin' } };
-
-  rows.forEach(function (r) {
-    var entity = String(r[1] || '');
-    var action = String(r[2] || '');
-    var payload = {};
-    try {
-      payload = JSON.parse(String(r[3] || '{}'));
-    } catch (e) {
-      payload = {};
-    }
-
-    if (entity === 'tasks') {
-      if (action === 'upsert' && payload && payload.id) tasksById[String(payload.id)] = payload;
-      if (action === 'delete' && payload && payload.id) delete tasksById[String(payload.id)];
-      if (action === 'import' && payload && payload.tasks) {
-        tasksById = {};
-        payload.tasks.forEach(function (t) {
-          if (t && t.id) tasksById[String(t.id)] = t;
-        });
-      }
-    }
-
-    if (entity === 'employees') {
-      if (action === 'upsert' && payload && payload.name) employees[String(payload.name)] = true;
-      if (action === 'delete' && payload && payload.name) delete employees[String(payload.name)];
-      if (action === 'import' && payload && payload.employees) {
-        employees = {};
-        payload.employees.forEach(function (name) {
-          if (name) employees[String(name)] = true;
-        });
-      }
-    }
-
-    if (entity === 'vehicles') {
-      if (action === 'upsert' && payload && payload.name) vehicles[String(payload.name)] = true;
-      if (action === 'delete' && payload && payload.name) delete vehicles[String(payload.name)];
-      if (action === 'import' && payload && payload.vehicles) {
-        vehicles = {};
-        payload.vehicles.forEach(function (name) {
-          if (name) vehicles[String(name)] = true;
-        });
-      }
-    }
-
-    if (entity === 'contacts') {
-      if (action === 'upsert' && payload && payload.id) contactsById[String(payload.id)] = payload;
-      if (action === 'delete' && payload && payload.id) delete contactsById[String(payload.id)];
-      if (action === 'import' && payload && payload.contacts) {
-        contactsById = {};
-        payload.contacts.forEach(function (c) {
-          if (c && c.id) contactsById[String(c.id)] = c;
-        });
-      }
-    }
-
-    if (entity === 'admins') {
-      if (action === 'upsert' && payload && payload.username && payload.password) {
-        adminsByUser[String(payload.username)] = {
-          username: String(payload.username),
-          password: String(payload.password),
-        };
-      }
-      if (action === 'delete' && payload && payload.username) {
-        var key = String(payload.username);
-        if (key !== 'admin') delete adminsByUser[key];
-      }
-    }
-
-    if (entity === 'bootstrap' && action === 'import' && payload) {
-      // Optional: import full state
-      if (payload.tasks) {
-        tasksById = {};
-        payload.tasks.forEach(function (t) {
-          if (t && t.id) tasksById[String(t.id)] = t;
-        });
-      }
-      if (payload.employees) {
-        employees = {};
-        payload.employees.forEach(function (name) {
-          if (name) employees[String(name)] = true;
-        });
-      }
-      if (payload.vehicles) {
-        vehicles = {};
-        payload.vehicles.forEach(function (name) {
-          if (name) vehicles[String(name)] = true;
-        });
-      }
-      if (payload.contacts) {
-        contactsById = {};
-        payload.contacts.forEach(function (c) {
-          if (c && c.id) contactsById[String(c.id)] = c;
-        });
-      }
-    }
-  });
-
-  // Always refresh snapshot tab on every state build
-  // (ensures the `admins` sheet exists and is up to date)
+  // Keep admins snapshot in sync with events (so admins still managed append-only)
   try {
     syncAdminsSheet_();
   } catch (e) {
-    // ignore snapshot errors; state still works from events
+    // ignore
   }
 
-  return {
-    tasks: Object.keys(tasksById).map(function (k) {
-      return tasksById[k];
-    }),
-    employees: Object.keys(employees),
-    vehicles: Object.keys(vehicles),
-    contacts: Object.keys(contactsById).map(function (k) {
-      return contactsById[k];
-    }),
-    admins: Object.keys(adminsByUser),
+  var state = {
+    tasks: readKvJsonTab_(TAB_TASKS),
+    employees: readListTab_(TAB_EMPLOYEES),
+    vehicles: readListTab_(TAB_VEHICLES),
+    contacts: readKvJsonTab_(TAB_CONTACTS),
+    admins: Object.keys(getAdminsMapFromEvents_()),
+    updatedAt: getUpdatedAt_(),
   };
+  return state;
 }
 
 function login_(username, password) {

@@ -22,9 +22,11 @@ export type ApiEvent = {
 const DEFAULT_GAS_URL =
   'https://script.google.com/macros/s/AKfycbxQMHx8YRSomcNyRll6q1aCAT2bQsRjXEuL5Ap2iP7N_8Oaq0yfvLpki4BZGwd5cp7sSQ/exec';
 
-function gasUrl() {
+const GAS_URL_LS_KEY = 'workflow.gasUrl.v1';
+
+export function getGasUrl(): string {
   try {
-    const fromLs = localStorage.getItem('workflow.gasUrl.v1');
+    const fromLs = localStorage.getItem(GAS_URL_LS_KEY);
     if (fromLs && fromLs.trim()) return fromLs.trim();
   } catch {
     // ignore
@@ -33,15 +35,31 @@ function gasUrl() {
   return fromEnv?.trim() || DEFAULT_GAS_URL;
 }
 
+export function setGasUrl(nextUrl: string) {
+  const url = String(nextUrl || '').trim();
+  try {
+    if (!url) localStorage.removeItem(GAS_URL_LS_KEY);
+    else localStorage.setItem(GAS_URL_LS_KEY, url);
+  } catch {
+    // ignore
+  }
+}
+
+function gasUrl() {
+  return getGasUrl();
+}
+
 function jsonp<T>(url: string, timeoutMs = 8000): Promise<T> {
   return new Promise((resolve, reject) => {
     const cb = `__jsonp_cb_${Math.random().toString(36).slice(2)}`;
+    let settled = false;
     const timer = window.setTimeout(() => {
       cleanup();
-      reject(new Error('JSONP timeout'));
+      reject(new Error('JSONP timeout (web app may require access or callback not executed)'));
     }, timeoutMs);
 
     const cleanup = () => {
+      settled = true;
       window.clearTimeout(timer);
       try {
         delete (window as any)[cb];
@@ -58,9 +76,20 @@ function jsonp<T>(url: string, timeoutMs = 8000): Promise<T> {
     };
     script.onerror = () => {
       cleanup();
-      reject(new Error('JSONP error'));
+      reject(new Error('JSONP error (script failed to load)'));
     };
-    script.src = `${url}${url.includes('?') ? '&' : '?'}callback=${encodeURIComponent(cb)}`;
+    // Cache-bust to reduce stale/cached HTML responses
+    const bust = `_=${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    script.src = `${url}${url.includes('?') ? '&' : '?'}callback=${encodeURIComponent(cb)}&${bust}`;
+    script.onload = () => {
+      // If the script loads but callback never fires (HTML/login page), fail fast-ish.
+      window.setTimeout(() => {
+        if (!settled) {
+          cleanup();
+          reject(new Error('JSONP loaded but callback not called (check Web App access / deployment)'));
+        }
+      }, 300);
+    };
     document.head.appendChild(script);
   });
 }

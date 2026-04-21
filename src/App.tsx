@@ -1,9 +1,9 @@
-import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { Calendar, LogIn, LogOut, Plus, Trash2, Truck, Upload, Users, X } from 'lucide-react';
 import { INITIAL_TASKS } from './constants';
 import { Task } from './types';
 import { cn } from './lib/utils';
-import { apiAppendEvent, apiGetState, apiLogin } from './lib/api';
+import { apiAppendEvent, apiGetState, apiLogin, getGasUrl, setGasUrl } from './lib/api';
 
 const TASKS_STORAGE_KEY = 'workflow.tasks.v1';
 const AUTH_STORAGE_KEY = 'workflow.auth.v1';
@@ -133,7 +133,11 @@ function newRowFor(date: string, category: NewRow['category']): NewRow {
 }
 
 function isoDate(d: Date) {
-  return d.toISOString().slice(0, 10);
+  // Local YYYY-MM-DD (avoid UTC off-by-one day)
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${dd}`;
 }
 
 function startOfWeekMonday(dateIso: string) {
@@ -144,12 +148,22 @@ function startOfWeekMonday(dateIso: string) {
   return d;
 }
 
+function viewerConstructionTitle(dateIso: string) {
+  const d = new Date(`${dateIso}T00:00:00`);
+  // vi-VN: "Thứ Tư", "Chủ Nhật", ...
+  const weekday = new Intl.DateTimeFormat('vi-VN', { weekday: 'long' }).format(d);
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  return `Lịch thi công ${weekday} / ${dd} / ${mm}`;
+}
+
 export default function App() {
   const [auth, setAuth] = useState<AuthState>(() => loadAuth());
   const todayIso = useMemo(() => isoDate(new Date()), []);
   const [selectedDate, setSelectedDate] = useState(() => isoDate(new Date()));
   const [tasks, setTasks] = useState<Task[]>(() => loadTasks());
   const importInputRef = useRef<HTMLInputElement | null>(null);
+  // NOTE: typing performance - composition is handled in memo panels below
 
   const [adding, setAdding] = useState<NewRow | null>(null);
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
@@ -165,16 +179,13 @@ export default function App() {
   const [vehicles, setVehicles] = useState<string[]>(() => (typeof window === 'undefined' ? [] : loadVehicles()));
   const [contacts, setContacts] = useState<ContactItem[]>(() => (typeof window === 'undefined' ? [] : loadContacts()));
 
-  const [newEmployee, setNewEmployee] = useState('');
-  const [newVehicle, setNewVehicle] = useState('');
-  const [newContactName, setNewContactName] = useState('');
-  const [newContactPhone, setNewContactPhone] = useState('');
   const [admins, setAdmins] = useState<string[]>(() => ['admin']);
-  const [newAdminUsername, setNewAdminUsername] = useState('');
-  const [newAdminPassword, setNewAdminPassword] = useState('');
 
   const [remoteStatus, setRemoteStatus] = useState<'idle' | 'loading' | 'error'>('idle');
   const [remoteError, setRemoteError] = useState<string | null>(null);
+  const [gasUrlEditorOpen, setGasUrlEditorOpen] = useState(false);
+  const [gasUrlDraft, setGasUrlDraft] = useState(() => (typeof window === 'undefined' ? '' : getGasUrl()));
+  const [syncNonce, setSyncNonce] = useState(0);
 
   const clientId = useMemo(() => {
     try {
@@ -213,24 +224,62 @@ export default function App() {
   // Load from Google Sheet via Apps Script if configured (append-only log)
   useEffect(() => {
     const ac = new AbortController();
-    setRemoteStatus('loading');
-    setRemoteError(null);
-    apiGetState(ac.signal)
-      .then((state) => {
-        if (Array.isArray(state.tasks)) setTasks(state.tasks as Task[]);
-        if (Array.isArray(state.employees)) setEmployees(state.employees);
-        if (Array.isArray(state.vehicles)) setVehicles(state.vehicles);
-        if (Array.isArray(state.contacts)) setContacts(state.contacts as ContactItem[]);
-        if (Array.isArray((state as any).admins)) setAdmins((state as any).admins);
+    let retryMs = 1500;
+    let stopped = false;
+
+    const applyState = (state: any) => {
+      if (Array.isArray(state?.tasks)) setTasks(state.tasks as Task[]);
+      if (Array.isArray(state?.employees)) setEmployees(state.employees);
+      if (Array.isArray(state?.vehicles)) setVehicles(state.vehicles);
+      if (Array.isArray(state?.contacts)) setContacts(state.contacts as ContactItem[]);
+      if (Array.isArray(state?.admins)) setAdmins(state.admins);
+    };
+
+    const syncOnce = async () => {
+      if (ac.signal.aborted || stopped) return;
+      setRemoteStatus((s) => (s === 'idle' ? 'loading' : s));
+      setRemoteError(null);
+      try {
+        const state = await apiGetState(ac.signal);
+        applyState(state);
+        retryMs = 1500;
         setRemoteStatus('idle');
-      })
-      .catch((e: any) => {
+      } catch (e: any) {
+        const msg = e?.message ?? 'Không kết nối được Google Sheet.';
         setRemoteStatus('error');
-        setRemoteError(e?.message ?? 'Không kết nối được Google Sheet.');
-      });
-    return () => ac.abort();
+        setRemoteError(msg);
+        // Backoff retry so the app "auto reconnects" without reload.
+        const wait = retryMs;
+        retryMs = Math.min(60000, Math.round(retryMs * 1.8));
+        window.setTimeout(() => {
+          void syncOnce();
+        }, wait);
+      }
+    };
+
+    void syncOnce();
+
+    // Periodic refresh when healthy (1 minute)
+    const interval = window.setInterval(() => {
+      if (ac.signal.aborted || stopped) return;
+      void syncOnce();
+    }, 60000);
+
+    return () => {
+      stopped = true;
+      window.clearInterval(interval);
+      ac.abort();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [syncNonce]);
+
+  const saveGasUrl = () => {
+    const next = gasUrlDraft.trim();
+    setGasUrl(next);
+    setGasUrlEditorOpen(false);
+    // Restart the sync loop immediately with the new URL
+    setSyncNonce((n) => n + 1);
+  };
 
   const daily = useMemo(() => tasks.filter((t) => t.dueDate === selectedDate), [tasks, selectedDate]);
   const construction = useMemo(() => daily.filter((t) => t.category === 'construction'), [daily]);
@@ -252,7 +301,7 @@ export default function App() {
       priority: 'medium',
       status: 'todo',
       dueDate: adding.dueDate,
-      createdAt: new Date().toISOString().slice(0, 10),
+      createdAt: isoDate(new Date()),
       category: adding.category,
       contact: adding.contact?.trim() || undefined,
       workplace: adding.workplace?.trim() || undefined,
@@ -306,6 +355,24 @@ export default function App() {
       payload: { id: taskId },
       clientId,
     });
+  };
+
+  const duplicateTask = (task: Task) => {
+    const copy: Task = {
+      ...task,
+      id: `task_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+      createdAt: isoDate(new Date()),
+      title: task.title ? `${task.title} (copy)` : 'Công việc (copy)',
+    };
+    setTasks((prev) => [copy, ...prev]);
+    appendEvent({
+      entity: 'tasks',
+      action: 'upsert',
+      payload: copy,
+      clientId,
+    });
+    // Open editor so user can adjust quickly
+    startEditTask(copy);
   };
 
   const importJson = async (file: File) => {
@@ -515,6 +582,412 @@ export default function App() {
     </div>
   );
 
+  const EmployeesPanel = memo(function EmployeesPanel({
+    employees,
+    setEmployees,
+    appendEvent,
+    clientId,
+  }: {
+    employees: string[];
+    setEmployees: React.Dispatch<React.SetStateAction<string[]>>;
+    appendEvent: (evt: Parameters<typeof apiAppendEvent>[0]) => void;
+    clientId: string;
+  }) {
+    const [draft, setDraft] = useState('');
+    const composing = useRef(false);
+    const add = () => {
+      const name = draft.trim();
+      if (!name) return;
+      setEmployees((prev) => (prev.includes(name) ? prev : [...prev, name]));
+      setDraft('');
+      appendEvent({ entity: 'employees', action: 'upsert', payload: { name }, clientId });
+    };
+    return (
+      <>
+        <div className="flex flex-col sm:flex-row gap-2">
+          <input
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onCompositionStart={() => (composing.current = true)}
+            onCompositionEnd={() => (composing.current = false)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !composing.current) add();
+            }}
+            placeholder="Nhập tên nhân viên..."
+            autoComplete="off"
+            spellCheck={false}
+            className="flex-1 px-4 py-3 rounded-2xl bg-white border border-slate-200 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-base md:text-lg font-semibold leading-6 caret-indigo-600"
+          />
+          <button
+            onClick={add}
+            className="px-6 py-3 rounded-2xl bg-indigo-500 text-white hover:bg-indigo-600 text-[10px] font-black uppercase tracking-widest shadow-sm active:scale-95"
+          >
+            Thêm
+          </button>
+        </div>
+
+        <div className="mt-4 divide-y divide-slate-200 border border-slate-200 rounded-2xl overflow-hidden bg-white">
+          {employees.length === 0 ? (
+            <div className="p-4 text-slate-500 italic">Trống</div>
+          ) : (
+            employees.map((name) => (
+              <div key={name} className="p-4 flex items-center justify-between gap-4">
+                <div className="font-bold text-slate-900">{name}</div>
+                <button
+                  onClick={() => {
+                    setEmployees((prev) => prev.filter((x) => x !== name));
+                    appendEvent({ entity: 'employees', action: 'delete', payload: { name }, clientId });
+                  }}
+                  className="p-2 rounded-2xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600"
+                  aria-label="Xóa"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+      </>
+    );
+  });
+
+  const VehiclesPanel = memo(function VehiclesPanel({
+    vehicles,
+    setVehicles,
+    appendEvent,
+    clientId,
+  }: {
+    vehicles: string[];
+    setVehicles: React.Dispatch<React.SetStateAction<string[]>>;
+    appendEvent: (evt: Parameters<typeof apiAppendEvent>[0]) => void;
+    clientId: string;
+  }) {
+    const [draft, setDraft] = useState('');
+    const composing = useRef(false);
+    const add = () => {
+      const name = draft.trim();
+      if (!name) return;
+      setVehicles((prev) => (prev.includes(name) ? prev : [...prev, name]));
+      setDraft('');
+      appendEvent({ entity: 'vehicles', action: 'upsert', payload: { name }, clientId });
+    };
+    return (
+      <>
+        <div className="flex flex-col sm:flex-row gap-2">
+          <input
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onCompositionStart={() => (composing.current = true)}
+            onCompositionEnd={() => (composing.current = false)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !composing.current) add();
+            }}
+            placeholder="Nhập tên xe..."
+            autoComplete="off"
+            spellCheck={false}
+            className="flex-1 px-4 py-3 rounded-2xl bg-white border border-slate-200 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-base md:text-lg font-semibold leading-6 caret-indigo-600"
+          />
+          <button
+            onClick={add}
+            className="px-6 py-3 rounded-2xl bg-indigo-500 text-white hover:bg-indigo-600 text-[10px] font-black uppercase tracking-widest shadow-sm active:scale-95"
+          >
+            Thêm
+          </button>
+        </div>
+
+        <div className="mt-4 divide-y divide-slate-200 border border-slate-200 rounded-2xl overflow-hidden bg-white">
+          {vehicles.length === 0 ? (
+            <div className="p-4 text-slate-500 italic">Trống</div>
+          ) : (
+            vehicles.map((name) => (
+              <div key={name} className="p-4 flex items-center justify-between gap-4">
+                <div className="font-bold text-slate-900">{name}</div>
+                <button
+                  onClick={() => {
+                    setVehicles((prev) => prev.filter((x) => x !== name));
+                    appendEvent({ entity: 'vehicles', action: 'delete', payload: { name }, clientId });
+                  }}
+                  className="p-2 rounded-2xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600"
+                  aria-label="Xóa"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+      </>
+    );
+  });
+
+  const ContactsPanel = memo(function ContactsPanel({
+    contacts,
+    setContacts,
+    appendEvent,
+    clientId,
+  }: {
+    contacts: ContactItem[];
+    setContacts: React.Dispatch<React.SetStateAction<ContactItem[]>>;
+    appendEvent: (evt: Parameters<typeof apiAppendEvent>[0]) => void;
+    clientId: string;
+  }) {
+    const [nameDraft, setNameDraft] = useState('');
+    const [phoneDraft, setPhoneDraft] = useState('');
+    const composing = useRef(false);
+    const add = () => {
+      const name = nameDraft.trim();
+      const phone = phoneDraft.trim();
+      if (!name) return;
+      const item: ContactItem = {
+        id: `ct_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+        name,
+        phone: phone || undefined,
+      };
+      setContacts((prev) => [...prev, item]);
+      setNameDraft('');
+      setPhoneDraft('');
+      appendEvent({ entity: 'contacts', action: 'upsert', payload: item, clientId });
+    };
+    return (
+      <>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+          <input
+            value={nameDraft}
+            onChange={(e) => setNameDraft(e.target.value)}
+            onCompositionStart={() => (composing.current = true)}
+            onCompositionEnd={() => (composing.current = false)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !composing.current) add();
+            }}
+            placeholder="Tên liên hệ"
+            autoComplete="off"
+            spellCheck={false}
+            className="px-4 py-3 rounded-2xl bg-white border border-slate-200 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-base md:text-lg font-semibold leading-6 caret-indigo-600"
+          />
+          <input
+            value={phoneDraft}
+            onChange={(e) => setPhoneDraft(e.target.value)}
+            onCompositionStart={() => (composing.current = true)}
+            onCompositionEnd={() => (composing.current = false)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !composing.current) add();
+            }}
+            placeholder="Số điện thoại (tuỳ chọn)"
+            autoComplete="off"
+            spellCheck={false}
+            className="px-4 py-3 rounded-2xl bg-white border border-slate-200 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-base md:text-lg font-semibold leading-6 caret-indigo-600"
+          />
+          <button
+            onClick={add}
+            className="px-6 py-3 rounded-2xl bg-indigo-500 text-white hover:bg-indigo-600 text-[10px] font-black uppercase tracking-widest shadow-sm active:scale-95"
+          >
+            Thêm
+          </button>
+        </div>
+
+        <div className="mt-4 divide-y divide-slate-200 border border-slate-200 rounded-2xl overflow-hidden bg-white">
+          {contacts.length === 0 ? (
+            <div className="p-4 text-slate-500 italic">Trống</div>
+          ) : (
+            contacts.map((c) => (
+              <div key={c.id} className="p-4 flex items-center justify-between gap-4">
+                <div className="min-w-0">
+                  <div className="font-bold text-slate-900 truncate">{c.name}</div>
+                  {c.phone && <div className="text-sm text-slate-600 font-semibold">{c.phone}</div>}
+                </div>
+                <button
+                  onClick={() => {
+                    setContacts((prev) => prev.filter((x) => x.id !== c.id));
+                    appendEvent({ entity: 'contacts', action: 'delete', payload: { id: c.id }, clientId });
+                  }}
+                  className="p-2 rounded-2xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600"
+                  aria-label="Xóa"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+      </>
+    );
+  });
+
+  const AdminsPanel = memo(function AdminsPanel({
+    admins,
+    setAdmins,
+    appendEvent,
+    clientId,
+  }: {
+    admins: string[];
+    setAdmins: React.Dispatch<React.SetStateAction<string[]>>;
+    appendEvent: (evt: Parameters<typeof apiAppendEvent>[0]) => void;
+    clientId: string;
+  }) {
+    const [usernameDraft, setUsernameDraft] = useState('');
+    const [passwordDraft, setPasswordDraft] = useState('');
+    const composing = useRef(false);
+    const add = () => {
+      const username = usernameDraft.trim();
+      const password = passwordDraft;
+      if (!username || !password) return;
+      if (username === 'admin') return;
+      setAdmins((prev) => (prev.includes(username) ? prev : [...prev, username]));
+      setUsernameDraft('');
+      setPasswordDraft('');
+      appendEvent({ entity: 'admins', action: 'upsert', payload: { username, password }, clientId });
+    };
+    return (
+      <>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+          <input
+            value={usernameDraft}
+            onChange={(e) => setUsernameDraft(e.target.value)}
+            onCompositionStart={() => (composing.current = true)}
+            onCompositionEnd={() => (composing.current = false)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !composing.current) add();
+            }}
+            placeholder="Tài khoản (username)"
+            autoComplete="off"
+            spellCheck={false}
+            className="px-4 py-3 rounded-2xl bg-white border border-slate-200 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-base md:text-lg font-semibold leading-6 caret-indigo-600"
+          />
+          <input
+            value={passwordDraft}
+            onChange={(e) => setPasswordDraft(e.target.value)}
+            onCompositionStart={() => (composing.current = true)}
+            onCompositionEnd={() => (composing.current = false)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !composing.current) add();
+            }}
+            placeholder="Mật khẩu"
+            type="password"
+            autoComplete="new-password"
+            spellCheck={false}
+            className="px-4 py-3 rounded-2xl bg-white border border-slate-200 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-base md:text-lg font-semibold leading-6 caret-indigo-600"
+          />
+          <button
+            onClick={add}
+            className="px-6 py-3 rounded-2xl bg-indigo-500 text-white hover:bg-indigo-600 text-[10px] font-black uppercase tracking-widest shadow-sm active:scale-95"
+          >
+            Thêm
+          </button>
+        </div>
+
+        <div className="mt-4 divide-y divide-slate-200 border border-slate-200 rounded-2xl overflow-hidden bg-white">
+          {admins.length === 0 ? (
+            <div className="p-4 text-slate-500 italic">Trống</div>
+          ) : (
+            admins
+              .slice()
+              .sort()
+              .map((u) => (
+                <div key={u} className="p-4 flex items-center justify-between gap-4">
+                  <div className="font-bold text-slate-900">{u}</div>
+                  <button
+                    disabled={u === 'admin'}
+                    onClick={() => {
+                      if (u === 'admin') return;
+                      setAdmins((prev) => prev.filter((x) => x !== u));
+                      appendEvent({ entity: 'admins', action: 'delete', payload: { username: u }, clientId });
+                    }}
+                    className={cn(
+                      'p-2 rounded-2xl border bg-white hover:bg-slate-50',
+                      u === 'admin' ? 'border-slate-100 text-slate-300 cursor-not-allowed' : 'border-slate-200 text-slate-600',
+                    )}
+                    aria-label="Xóa"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              ))
+          )}
+        </div>
+        <div className="mt-3 text-xs font-semibold text-slate-600">
+          Lưu ý: mật khẩu được lưu trong Google Sheet (events). Chỉ chia sẻ sheet cho người tin cậy.
+        </div>
+      </>
+    );
+  });
+
+  const MultiManpowerPicker = memo(function MultiManpowerPicker({
+    value,
+    employees,
+    onChange,
+  }: {
+    value: string;
+    employees: string[];
+    onChange: (next: string) => void;
+  }) {
+    const selected = useMemo(() => {
+      return String(value || '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+    }, [value]);
+
+    const [pick, setPick] = useState('');
+
+    const add = (name: string) => {
+      const n = String(name || '').trim();
+      if (!n) return;
+      onChange([...selected, n].join(', '));
+      setPick('');
+    };
+
+    const removeAt = (idx: number) => {
+      onChange(selected.filter((_, i) => i !== idx).join(', '));
+    };
+
+    return (
+      <div className="space-y-2">
+        <div className="flex items-center gap-2">
+          <select
+            value={pick}
+            onChange={(e) => add(e.target.value)}
+            className="w-full px-4 py-3 rounded-2xl bg-white border border-slate-200 text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+          >
+            <option value="">- Chọn nhân viên -</option>
+            {employees.map((name) => (
+              <option key={name} value={name}>
+                {name}
+              </option>
+            ))}
+          </select>
+          {selected.length > 0 && (
+            <button
+              onClick={() => onChange('')}
+              className="shrink-0 px-3 py-3 rounded-2xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600"
+              aria-label="Xóa hết"
+              title="Xóa hết"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+
+        {selected.length > 0 ? (
+          <div className="flex flex-wrap gap-2">
+            {selected.map((name, idx) => (
+              <button
+                key={`${name}_${idx}`}
+                onClick={() => removeAt(idx)}
+                className="inline-flex items-center gap-2 px-3 py-2 rounded-2xl bg-indigo-50 border border-indigo-100 text-indigo-700 font-bold"
+                title="Bấm để xóa"
+              >
+                <span>{name}</span>
+                <X className="w-4 h-4" />
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div className="text-xs font-semibold text-slate-500">Chưa chọn</div>
+        )}
+      </div>
+    );
+  });
+
   return (
     <div className="min-h-screen text-slate-900">
       <div className="sticky top-0 z-20 border-b border-slate-200/80 bg-white/70 backdrop-blur-xl">
@@ -611,6 +1084,17 @@ export default function App() {
               {remoteStatus === 'error' && (
                 <div className="space-y-1">
                   <div>{remoteError || 'Không kết nối được Google Sheet.'}</div>
+                  <div className="flex flex-wrap items-center gap-2 pt-1">
+                    <button
+                      onClick={() => {
+                        setGasUrlDraft(getGasUrl());
+                        setGasUrlEditorOpen(true);
+                      }}
+                      className="inline-flex items-center justify-center bg-white hover:bg-slate-50 border border-slate-200 text-slate-900 rounded-xl px-3 py-2 text-[10px] font-black uppercase tracking-widest transition-all shadow-sm"
+                    >
+                      Cập nhật link Apps Script
+                    </button>
+                  </div>
                   {(remoteError || '').toLowerCase().includes('jsonp') && (
                     <div className="text-[11px] font-semibold text-slate-600">
                       Lỗi này xảy ra khi Web App Apps Script chưa hỗ trợ JSONP. Hãy mở link test sau, nếu không ra dạng{' '}
@@ -629,6 +1113,32 @@ export default function App() {
                   )}
                 </div>
               )}
+            </div>
+          )}
+
+          {gasUrlEditorOpen && (
+            <div className="mt-3 bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">
+              <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Link Web App (kết thúc bằng /exec)</div>
+              <input
+                value={gasUrlDraft}
+                onChange={(e) => setGasUrlDraft(e.target.value)}
+                placeholder="https://script.google.com/macros/s/XXXX/exec"
+                className="mt-2 w-full px-4 py-3 rounded-2xl bg-white border border-slate-200 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+              />
+              <div className="mt-3 flex items-center gap-2">
+                <button
+                  onClick={saveGasUrl}
+                  className="inline-flex items-center justify-center bg-indigo-500 hover:bg-indigo-600 text-white rounded-xl px-4 py-2 text-[10px] font-black uppercase tracking-widest transition-all shadow-sm active:scale-95"
+                >
+                  Lưu & kết nối lại
+                </button>
+                <button
+                  onClick={() => setGasUrlEditorOpen(false)}
+                  className="inline-flex items-center justify-center bg-white hover:bg-slate-50 border border-slate-200 text-slate-900 rounded-xl px-4 py-2 text-[10px] font-black uppercase tracking-widest transition-all shadow-sm"
+                >
+                  Đóng
+                </button>
+              </div>
             </div>
           )}
 
@@ -697,18 +1207,11 @@ export default function App() {
                   />
                   <div className="space-y-1">
                     <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Nhân lực</div>
-                    <select
+                    <MultiManpowerPicker
                       value={adding.manpower ?? ''}
-                      onChange={(e) => setAdding((p) => (p ? { ...p, manpower: e.target.value } : p))}
-                      className="w-full px-4 py-3 rounded-2xl bg-white border border-slate-200 text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-                    >
-                      <option value="">-</option>
-                      {employees.map((name) => (
-                        <option key={name} value={name}>
-                          {name}
-                        </option>
-                      ))}
-                    </select>
+                      employees={employees}
+                      onChange={(next) => setAdding((p) => (p ? { ...p, manpower: next } : p))}
+                    />
                   </div>
                   <div className="space-y-1">
                     <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Xe</div>
@@ -758,274 +1261,25 @@ export default function App() {
           <>
             {adminView === 'employees' && (
               <AdminListShell title="Danh sách nhân viên" icon={<Users className="w-5 h-5" />}>
-                <div className="flex flex-col sm:flex-row gap-2">
-                  <input
-                    value={newEmployee}
-                    onChange={(e) => setNewEmployee(e.target.value)}
-                    placeholder="Nhập tên nhân viên..."
-                    className="flex-1 px-4 py-3 rounded-2xl bg-white border border-slate-200 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-                  />
-                  <button
-                    onClick={() => {
-                      const name = newEmployee.trim();
-                      if (!name) return;
-                      setEmployees((prev) => (prev.includes(name) ? prev : [...prev, name]));
-                      setNewEmployee('');
-                      appendEvent({
-                        entity: 'employees',
-                        action: 'upsert',
-                        payload: { name },
-                        clientId,
-                      });
-                    }}
-                    className="px-6 py-3 rounded-2xl bg-indigo-500 text-white hover:bg-indigo-600 text-[10px] font-black uppercase tracking-widest shadow-sm active:scale-95"
-                  >
-                    Thêm
-                  </button>
-                </div>
-
-                <div className="mt-4 divide-y divide-slate-200 border border-slate-200 rounded-2xl overflow-hidden bg-white">
-                  {employees.length === 0 ? (
-                    <div className="p-4 text-slate-500 italic">Trống</div>
-                  ) : (
-                    employees.map((name) => (
-                      <div key={name} className="p-4 flex items-center justify-between gap-4">
-                        <div className="font-bold text-slate-900">{name}</div>
-                        <button
-                          onClick={() => {
-                            setEmployees((prev) => prev.filter((x) => x !== name));
-                            appendEvent({
-                              entity: 'employees',
-                              action: 'delete',
-                              payload: { name },
-                              clientId,
-                            });
-                          }}
-                          className="p-2 rounded-2xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600"
-                          aria-label="Xóa"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    ))
-                  )}
-                </div>
+                <EmployeesPanel employees={employees} setEmployees={setEmployees} appendEvent={appendEvent} clientId={clientId} />
               </AdminListShell>
             )}
 
             {adminView === 'vehicles' && (
               <AdminListShell title="Danh sách xe" icon={<Truck className="w-5 h-5" />}>
-                <div className="flex flex-col sm:flex-row gap-2">
-                  <input
-                    value={newVehicle}
-                    onChange={(e) => setNewVehicle(e.target.value)}
-                    placeholder="Nhập tên xe..."
-                    className="flex-1 px-4 py-3 rounded-2xl bg-white border border-slate-200 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-                  />
-                  <button
-                    onClick={() => {
-                      const v = newVehicle.trim();
-                      if (!v) return;
-                      setVehicles((prev) => (prev.includes(v) ? prev : [...prev, v]));
-                      setNewVehicle('');
-                      appendEvent({
-                        entity: 'vehicles',
-                        action: 'upsert',
-                        payload: { name: v },
-                        clientId,
-                      });
-                    }}
-                    className="px-6 py-3 rounded-2xl bg-indigo-500 text-white hover:bg-indigo-600 text-[10px] font-black uppercase tracking-widest shadow-sm active:scale-95"
-                  >
-                    Thêm
-                  </button>
-                </div>
-
-                <div className="mt-4 divide-y divide-slate-200 border border-slate-200 rounded-2xl overflow-hidden bg-white">
-                  {vehicles.length === 0 ? (
-                    <div className="p-4 text-slate-500 italic">Trống</div>
-                  ) : (
-                    vehicles.map((v) => (
-                      <div key={v} className="p-4 flex items-center justify-between gap-4">
-                        <div className="font-bold text-slate-900">{v}</div>
-                        <button
-                          onClick={() => {
-                            setVehicles((prev) => prev.filter((x) => x !== v));
-                            appendEvent({
-                              entity: 'vehicles',
-                              action: 'delete',
-                              payload: { name: v },
-                              clientId,
-                            });
-                          }}
-                          className="p-2 rounded-2xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600"
-                          aria-label="Xóa"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    ))
-                  )}
-                </div>
+                <VehiclesPanel vehicles={vehicles} setVehicles={setVehicles} appendEvent={appendEvent} clientId={clientId} />
               </AdminListShell>
             )}
 
             {adminView === 'contacts' && (
               <AdminListShell title="Danh sách liên hệ" icon={<Upload className="w-5 h-5" />}>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                  <input
-                    value={newContactName}
-                    onChange={(e) => setNewContactName(e.target.value)}
-                    placeholder="Tên liên hệ"
-                    className="px-4 py-3 rounded-2xl bg-white border border-slate-200 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-                  />
-                  <input
-                    value={newContactPhone}
-                    onChange={(e) => setNewContactPhone(e.target.value)}
-                    placeholder="Số điện thoại (tuỳ chọn)"
-                    className="px-4 py-3 rounded-2xl bg-white border border-slate-200 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-                  />
-                  <button
-                    onClick={() => {
-                      const name = newContactName.trim();
-                      const phone = newContactPhone.trim();
-                      if (!name) return;
-                      const item = {
-                        id: `ct_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
-                        name,
-                        phone: phone || undefined,
-                      };
-                      setContacts((prev) => [
-                        ...prev,
-                        {
-                          id: item.id,
-                          name: item.name,
-                          phone: item.phone,
-                        },
-                      ]);
-                      setNewContactName('');
-                      setNewContactPhone('');
-                      appendEvent({
-                        entity: 'contacts',
-                        action: 'upsert',
-                        payload: item,
-                        clientId,
-                      });
-                    }}
-                    className="px-6 py-3 rounded-2xl bg-indigo-500 text-white hover:bg-indigo-600 text-[10px] font-black uppercase tracking-widest shadow-sm active:scale-95"
-                  >
-                    Thêm
-                  </button>
-                </div>
-
-                <div className="mt-4 divide-y divide-slate-200 border border-slate-200 rounded-2xl overflow-hidden bg-white">
-                  {contacts.length === 0 ? (
-                    <div className="p-4 text-slate-500 italic">Trống</div>
-                  ) : (
-                    contacts.map((c) => (
-                      <div key={c.id} className="p-4 flex items-center justify-between gap-4">
-                        <div className="min-w-0">
-                          <div className="font-bold text-slate-900 truncate">{c.name}</div>
-                          {c.phone && <div className="text-sm text-slate-600 font-semibold">{c.phone}</div>}
-                        </div>
-                        <button
-                          onClick={() => {
-                            setContacts((prev) => prev.filter((x) => x.id !== c.id));
-                            appendEvent({
-                              entity: 'contacts',
-                              action: 'delete',
-                              payload: { id: c.id },
-                              clientId,
-                            });
-                          }}
-                          className="p-2 rounded-2xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600"
-                          aria-label="Xóa"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    ))
-                  )}
-                </div>
+                <ContactsPanel contacts={contacts} setContacts={setContacts} appendEvent={appendEvent} clientId={clientId} />
               </AdminListShell>
             )}
 
             {adminView === 'admins' && (
               <AdminListShell title="Danh sách quản trị" icon={<Users className="w-5 h-5" />}>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                  <input
-                    value={newAdminUsername}
-                    onChange={(e) => setNewAdminUsername(e.target.value)}
-                    placeholder="Tài khoản (username)"
-                    className="px-4 py-3 rounded-2xl bg-white border border-slate-200 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-                  />
-                  <input
-                    value={newAdminPassword}
-                    onChange={(e) => setNewAdminPassword(e.target.value)}
-                    placeholder="Mật khẩu"
-                    type="password"
-                    className="px-4 py-3 rounded-2xl bg-white border border-slate-200 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-                  />
-                  <button
-                    onClick={() => {
-                      const username = newAdminUsername.trim();
-                      const password = newAdminPassword;
-                      if (!username || !password) return;
-                      if (username === 'admin') return;
-                      setAdmins((prev) => (prev.includes(username) ? prev : [...prev, username]));
-                      setNewAdminUsername('');
-                      setNewAdminPassword('');
-                      appendEvent({
-                        entity: 'admins',
-                        action: 'upsert',
-                        payload: { username, password },
-                        clientId,
-                      });
-                    }}
-                    className="px-6 py-3 rounded-2xl bg-indigo-500 text-white hover:bg-indigo-600 text-[10px] font-black uppercase tracking-widest shadow-sm active:scale-95"
-                  >
-                    Thêm
-                  </button>
-                </div>
-
-                <div className="mt-4 divide-y divide-slate-200 border border-slate-200 rounded-2xl overflow-hidden bg-white">
-                  {admins.length === 0 ? (
-                    <div className="p-4 text-slate-500 italic">Trống</div>
-                  ) : (
-                    admins
-                      .sort()
-                      .map((u) => (
-                        <div key={u} className="p-4 flex items-center justify-between gap-4">
-                          <div className="font-bold text-slate-900">{u}</div>
-                          <button
-                            disabled={u === 'admin'}
-                            onClick={() => {
-                              if (u === 'admin') return;
-                              setAdmins((prev) => prev.filter((x) => x !== u));
-                              appendEvent({
-                                entity: 'admins',
-                                action: 'delete',
-                                payload: { username: u },
-                                clientId,
-                              });
-                            }}
-                            className={cn(
-                              'p-2 rounded-2xl border bg-white hover:bg-slate-50',
-                              u === 'admin'
-                                ? 'border-slate-100 text-slate-300 cursor-not-allowed'
-                                : 'border-slate-200 text-slate-600',
-                            )}
-                            aria-label="Xóa"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                      ))
-                  )}
-                </div>
-                <div className="mt-3 text-xs font-semibold text-slate-600">
-                  Lưu ý: mật khẩu được lưu trong Google Sheet (events). Chỉ chia sẻ sheet cho người tin cậy.
-                </div>
+                <AdminsPanel admins={admins} setAdmins={setAdmins} appendEvent={appendEvent} clientId={clientId} />
               </AdminListShell>
             )}
           </>
@@ -1036,7 +1290,7 @@ export default function App() {
           <>
             {/* THI CÔNG */}
             <section className="bg-white/70 border border-slate-200 rounded-[28px] overflow-hidden shadow-sm">
-              <SectionHeader title="Thi công" />
+              <SectionHeader title={isAdmin ? 'Thi công' : viewerConstructionTitle(selectedDate)} />
 
               {/* Mobile cards */}
               <div className="md:hidden p-4 space-y-3">
@@ -1080,6 +1334,12 @@ export default function App() {
                             className="px-4 py-2 rounded-2xl bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 text-[10px] font-black uppercase tracking-widest"
                           >
                             Sửa
+                          </button>
+                          <button
+                            onClick={() => duplicateTask(t)}
+                            className="px-4 py-2 rounded-2xl bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 text-[10px] font-black uppercase tracking-widest"
+                          >
+                            Nhân bản
                           </button>
                           <button
                             onClick={() => deleteTask(t.id)}
@@ -1136,6 +1396,12 @@ export default function App() {
                                   Sửa
                                 </button>
                                 <button
+                                  onClick={() => duplicateTask(t)}
+                                  className="px-4 py-2 rounded-2xl bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 text-[10px] font-black uppercase tracking-widest"
+                                >
+                                  Nhân bản
+                                </button>
+                                <button
                                   onClick={() => deleteTask(t.id)}
                                   className="px-4 py-2 rounded-2xl bg-white hover:bg-slate-50 border border-slate-200 text-rose-600 text-[10px] font-black uppercase tracking-widest"
                                 >
@@ -1179,6 +1445,12 @@ export default function App() {
                                   Sửa
                                 </button>
                                 <button
+                                  onClick={() => duplicateTask(t)}
+                                  className="px-4 py-2 rounded-2xl bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 text-[10px] font-black uppercase tracking-widest"
+                                >
+                                  Nhân bản
+                                </button>
+                                <button
                                   onClick={() => deleteTask(t.id)}
                                   className="px-4 py-2 rounded-2xl bg-white hover:bg-slate-50 border border-slate-200 text-rose-600 text-[10px] font-black uppercase tracking-widest"
                                 >
@@ -1211,6 +1483,12 @@ export default function App() {
                                       className="px-4 py-2 rounded-2xl bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 text-[10px] font-black uppercase tracking-widest"
                                     >
                                       Sửa
+                                    </button>
+                                    <button
+                                      onClick={() => duplicateTask(t)}
+                                      className="px-4 py-2 rounded-2xl bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 text-[10px] font-black uppercase tracking-widest"
+                                    >
+                                      Nhân bản
                                     </button>
                                     <button
                                       onClick={() => deleteTask(t.id)}
@@ -1255,6 +1533,12 @@ export default function App() {
                                   Sửa
                                 </button>
                                 <button
+                                  onClick={() => duplicateTask(t)}
+                                  className="px-4 py-2 rounded-2xl bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 text-[10px] font-black uppercase tracking-widest"
+                                >
+                                  Nhân bản
+                                </button>
+                                <button
                                   onClick={() => deleteTask(t.id)}
                                   className="px-4 py-2 rounded-2xl bg-white hover:bg-slate-50 border border-slate-200 text-rose-600 text-[10px] font-black uppercase tracking-widest"
                                 >
@@ -1287,6 +1571,12 @@ export default function App() {
                                       className="px-4 py-2 rounded-2xl bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 text-[10px] font-black uppercase tracking-widest"
                                     >
                                       Sửa
+                                    </button>
+                                    <button
+                                      onClick={() => duplicateTask(t)}
+                                      className="px-4 py-2 rounded-2xl bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 text-[10px] font-black uppercase tracking-widest"
+                                    >
+                                      Nhân bản
                                     </button>
                                     <button
                                       onClick={() => deleteTask(t.id)}
