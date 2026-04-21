@@ -498,7 +498,7 @@ export default function App() {
     value?: string;
     valueClassName?: string;
   }) => (
-    <div className="flex items-start justify-between gap-4">
+    <div className="flex items-start justify-between gap-4 py-2 border-b border-slate-200/70 last:border-b-0">
       <span className="text-[10px] font-black text-slate-500 uppercase tracking-[0.22em]">{label}</span>
       <span className={cn('text-xs font-bold text-slate-800 text-right leading-snug', valueClassName)}>
         {value?.trim() ? value : '-'}
@@ -1303,7 +1303,7 @@ export default function App() {
               <SectionHeader title={isAdmin ? 'Thi công' : viewerConstructionTitle(selectedDate)} />
 
               {/* Mobile cards */}
-              <div className="md:hidden p-4 space-y-3">
+              <div className="md:hidden p-4 divide-y divide-slate-200/70">
                 {construction.length === 0 ? (
                   <div className="px-4 py-10 text-center text-slate-500 italic bg-white rounded-2xl border border-slate-200">
                     Trống
@@ -1312,8 +1312,9 @@ export default function App() {
                   construction.map((t, idx) => (
                     <div
                       key={t.id}
-                      className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm"
+                      className="py-3 first:pt-0 last:pb-0"
                     >
+                      <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
                           <div className="text-[10px] font-black text-slate-500 uppercase tracking-[0.22em]">
@@ -1331,7 +1332,7 @@ export default function App() {
                         </div>
                       </div>
 
-                      <div className="mt-4 space-y-2">
+                      <div className="mt-4">
                         <Field label="Liên hệ" value={t.contact} />
                         <Field label="Nơi làm việc" value={t.workplace} />
                         <Field label="Nhân lực" value={t.manpower} valueClassName="text-rose-600" />
@@ -1359,6 +1360,7 @@ export default function App() {
                           </button>
                         </div>
                       )}
+                      </div>
                     </div>
                   ))
                 )}
@@ -1387,7 +1389,7 @@ export default function App() {
                       </tr>
                     ) : (
                       construction.map((t, idx) => (
-                        <tr key={t.id} className="hover:bg-slate-50 transition-colors">
+                        <tr key={t.id} className="hover:bg-slate-50 transition-colors odd:bg-slate-50/40">
                           <td className="px-4 py-4 border-r border-slate-200 text-center font-mono text-slate-500">
                             {idx + 1}
                           </td>
@@ -1438,9 +1440,10 @@ export default function App() {
                       Trống
                     </div>
                   ) : (
-                    <div className="md:hidden space-y-2">
+                    <div className="md:hidden divide-y divide-slate-200/70">
                       {design.map((t, idx) => (
-                        <div key={t.id} className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">
+                        <div key={t.id} className="py-3 first:pt-0 last:pb-0">
+                          <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">
                           <div className="flex items-start justify-between gap-3">
                             <div className="min-w-0">
                               <div className="text-[10px] font-black text-slate-500 uppercase tracking-[0.22em]">#{idx + 1}</div>
@@ -1469,6 +1472,7 @@ export default function App() {
                               </div>
                             )}
                           </div>
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -1483,7 +1487,7 @@ export default function App() {
                           </tr>
                         ) : (
                           design.map((t) => (
-                            <tr key={t.id} className="hover:bg-slate-50 transition-colors">
+                            <tr key={t.id} className="hover:bg-slate-50 transition-colors odd:bg-slate-50/40">
                               <td className="px-6 py-4 text-slate-800 font-medium">{t.title}</td>
                               {isAdmin && (
                                 <td className="px-6 py-4 text-right">
@@ -1526,9 +1530,10 @@ export default function App() {
                       Trống
                     </div>
                   ) : (
-                    <div className="md:hidden space-y-2">
+                    <div className="md:hidden divide-y divide-slate-200/70">
                       {production.map((t, idx) => (
-                        <div key={t.id} className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">
+                        <div key={t.id} className="py-3 first:pt-0 last:pb-0">
+                          <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">
                           <div className="flex items-start justify-between gap-3">
                             <div className="min-w-0">
                               <div className="text-[10px] font-black text-slate-500 uppercase tracking-[0.22em]">#{idx + 1}</div>
@@ -1557,6 +1562,7 @@ export default function App() {
                               </div>
                             )}
                           </div>
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -1571,7 +1577,7 @@ export default function App() {
                           </tr>
                         ) : (
                           production.map((t) => (
-                            <tr key={t.id} className="hover:bg-slate-50 transition-colors">
+                            <tr key={t.id} className="hover:bg-slate-50 transition-colors odd:bg-slate-50/40">
                               <td className="px-6 py-4 text-slate-800 font-medium">{t.title}</td>
                               {isAdmin && (
                                 <td className="px-6 py-4 text-right">
