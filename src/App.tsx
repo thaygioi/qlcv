@@ -1000,20 +1000,20 @@ export default function App() {
               </p>
             </div>
 
-            <div className="flex flex-col sm:flex-row items-end sm:items-center gap-2">
-              <div className="flex items-center gap-2 bg-white p-2 rounded-2xl border border-slate-200 shadow-sm">
+            <div className="flex flex-nowrap items-center justify-end gap-2 overflow-x-auto max-w-full">
+              <div className="flex items-center gap-2 bg-white p-2 rounded-2xl border border-slate-200 shadow-sm shrink-0">
                 <Calendar className="w-4 h-4 text-slate-500" />
                 <input
                   type="date"
                   value={selectedDate}
                   onChange={(e) => setSelectedDate(e.target.value)}
-                  className="px-3 py-2 rounded-xl text-xs font-black bg-white border border-slate-200 text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
+                  className="px-2 py-2 rounded-xl text-sm font-semibold bg-white border border-slate-200 text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
                 />
               </div>
               <button
                 onClick={() => setSelectedDate(todayIso)}
                 className={cn(
-                  'inline-flex items-center gap-2 bg-white hover:bg-slate-50 border border-slate-200 text-slate-900 rounded-2xl px-4 py-3 text-[10px] font-black uppercase tracking-widest transition-all shadow-sm',
+                  'inline-flex items-center gap-2 bg-white hover:bg-slate-50 border border-slate-200 text-slate-900 rounded-2xl px-3 py-2 md:px-4 md:py-3 text-xs font-bold transition-all shadow-sm shrink-0',
                   selectedDate === todayIso && 'border-indigo-200 bg-indigo-50 text-indigo-700'
                 )}
               >
@@ -1023,7 +1023,7 @@ export default function App() {
               {isAdmin ? (
                 <button
                   onClick={logout}
-                  className="inline-flex items-center gap-2 bg-white hover:bg-slate-50 border border-slate-200 text-slate-900 rounded-2xl px-4 py-3 text-[10px] font-black uppercase tracking-widest transition-all shadow-sm"
+                  className="inline-flex items-center gap-2 bg-white hover:bg-slate-50 border border-slate-200 text-slate-900 rounded-2xl px-3 py-2 md:px-4 md:py-3 text-xs font-bold transition-all shadow-sm shrink-0"
                 >
                   <LogOut className="w-4 h-4 text-slate-500" />
                   <span>Đăng xuất</span>
@@ -1031,7 +1031,7 @@ export default function App() {
               ) : (
                 <button
                   onClick={openLogin}
-                  className="inline-flex items-center gap-2 bg-white hover:bg-slate-50 border border-slate-200 text-slate-900 rounded-2xl px-4 py-3 text-[10px] font-black uppercase tracking-widest transition-all shadow-sm"
+                  className="inline-flex items-center gap-2 bg-white hover:bg-slate-50 border border-slate-200 text-slate-900 rounded-2xl px-3 py-2 md:px-4 md:py-3 text-xs font-bold transition-all shadow-sm shrink-0"
                 >
                   <LogIn className="w-4 h-4 text-slate-500" />
                   <span>Đăng nhập</span>
