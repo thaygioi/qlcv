@@ -154,7 +154,7 @@ function viewerConstructionTitle(dateIso: string) {
   const weekday = new Intl.DateTimeFormat('vi-VN', { weekday: 'long' }).format(d);
   const dd = String(d.getDate()).padStart(2, '0');
   const mm = String(d.getMonth() + 1).padStart(2, '0');
-  return `Lịch thi công ${weekday} / ${dd} / ${mm}`;
+  return `Lịch thi công ${weekday} / ${dd} / ${mm} - BỘ PHẬN QUẢNG CÁO`;
 }
 
 export default function App() {
@@ -480,11 +480,19 @@ export default function App() {
     });
   };
 
-  const SectionHeader = ({ title }: { title: string }) => (
+  const SectionHeader = ({
+    title,
+    titleClassName,
+  }: {
+    title: string;
+    titleClassName?: string;
+  }) => (
     <div className="p-4 bg-white/80 border-b border-slate-200">
       <div className="flex items-center gap-3">
         <div className="w-1.5 h-5 rounded-full bg-indigo-500" />
-        <h2 className="text-sm font-black uppercase tracking-[0.24em] text-slate-900">{title}</h2>
+        <h2 className={cn('text-sm font-black uppercase tracking-[0.24em] text-slate-900', titleClassName)}>
+          {title}
+        </h2>
       </div>
     </div>
   );
@@ -1300,7 +1308,10 @@ export default function App() {
           <>
             {/* THI CÔNG */}
             <section className="bg-white/70 border border-slate-200 rounded-[28px] overflow-hidden shadow-sm">
-              <SectionHeader title={isAdmin ? 'Thi công' : viewerConstructionTitle(selectedDate)} />
+              <SectionHeader
+                title={isAdmin ? 'Thi công' : viewerConstructionTitle(selectedDate)}
+                titleClassName={isAdmin ? undefined : 'normal-case tracking-normal'}
+              />
 
               {/* Mobile cards */}
               <div className="md:hidden p-4 divide-y divide-slate-200/70">
