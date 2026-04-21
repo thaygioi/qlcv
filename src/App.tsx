@@ -489,10 +489,20 @@ export default function App() {
     </div>
   );
 
-  const Field = ({ label, value }: { label: string; value?: string }) => (
+  const Field = ({
+    label,
+    value,
+    valueClassName,
+  }: {
+    label: string;
+    value?: string;
+    valueClassName?: string;
+  }) => (
     <div className="flex items-start justify-between gap-4">
       <span className="text-[10px] font-black text-slate-500 uppercase tracking-[0.22em]">{label}</span>
-      <span className="text-xs font-bold text-slate-800 text-right leading-snug">{value?.trim() ? value : '-'}</span>
+      <span className={cn('text-xs font-bold text-slate-800 text-right leading-snug', valueClassName)}>
+        {value?.trim() ? value : '-'}
+      </span>
     </div>
   );
 
@@ -1324,7 +1334,7 @@ export default function App() {
                       <div className="mt-4 space-y-2">
                         <Field label="Liên hệ" value={t.contact} />
                         <Field label="Nơi làm việc" value={t.workplace} />
-                        <Field label="Nhân lực" value={t.manpower} />
+                        <Field label="Nhân lực" value={t.manpower} valueClassName="text-rose-600" />
                       </div>
 
                       {isAdmin && (
@@ -1384,7 +1394,7 @@ export default function App() {
                           <td className="px-6 py-4 border-r border-slate-200 font-bold text-slate-900">{t.title}</td>
                           <td className="px-6 py-4 border-r border-slate-200 text-slate-700">{t.contact || '-'}</td>
                           <td className="px-6 py-4 border-r border-slate-200 text-slate-700">{t.workplace || '-'}</td>
-                          <td className="px-6 py-4 border-r border-slate-200 text-slate-700">{t.manpower || '-'}</td>
+                          <td className="px-6 py-4 border-r border-slate-200 text-rose-600 font-semibold">{t.manpower || '-'}</td>
                           <td className="px-6 py-4 text-slate-700">{t.vehicle || '-'}</td>
                           {isAdmin && (
                             <td className="px-6 py-4 text-right">
