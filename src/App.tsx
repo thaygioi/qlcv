@@ -489,8 +489,8 @@ export default function App() {
   }) => (
     <div className="p-4 bg-white/80 border-b border-slate-200">
       <div className="flex items-center gap-3">
-        <div className="w-1.5 h-5 rounded-full bg-indigo-500" />
-        <h2 className={cn('text-sm font-black uppercase tracking-[0.24em] text-slate-900', titleClassName)}>
+        <div className="w-1.5 h-5 rounded-full bg-emerald-500" />
+        <h2 className={cn('text-sm font-black uppercase tracking-[0.14em] text-emerald-700', titleClassName)}>
           {title}
         </h2>
       </div>
@@ -594,7 +594,7 @@ export default function App() {
         <div className="w-9 h-9 rounded-2xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600">
           {icon}
         </div>
-        <div className="text-sm font-black uppercase tracking-[0.22em] text-slate-900">{title}</div>
+        <div className="text-sm font-black uppercase tracking-[0.14em] text-emerald-700">{title}</div>
       </div>
       <div className="p-4 md:p-6">{children}</div>
     </div>
@@ -1310,7 +1310,7 @@ export default function App() {
             <section className="bg-white/70 border border-slate-200 rounded-[28px] overflow-hidden shadow-sm">
               <SectionHeader
                 title={isAdmin ? 'Thi công' : viewerConstructionTitle(selectedDate)}
-                titleClassName={isAdmin ? undefined : 'normal-case tracking-normal'}
+                titleClassName={undefined}
               />
 
               {/* Mobile cards */}
