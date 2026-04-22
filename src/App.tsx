@@ -140,6 +140,20 @@ function isoDate(d: Date) {
   return `${y}-${m}-${dd}`;
 }
 
+function addDaysIso(dateIso: string, days: number) {
+  const d = new Date(`${dateIso}T12:00:00`);
+  d.setDate(d.getDate() + days);
+  return isoDate(d);
+}
+
+const TIEP_THEO_RE = /\(tiếp theo\)/i;
+
+function appendTiepTheoTitle(title: string) {
+  const trimmed = title.trim();
+  if (TIEP_THEO_RE.test(trimmed)) return title;
+  return `${trimmed} (tiếp theo)`;
+}
+
 function startOfWeekMonday(dateIso: string) {
   const d = new Date(`${dateIso}T00:00:00`);
   const day = d.getDay(); // 0=Sun..6=Sat
@@ -155,6 +169,51 @@ function viewerConstructionTitle(dateIso: string) {
   const dd = String(d.getDate()).padStart(2, '0');
   const mm = String(d.getMonth() + 1).padStart(2, '0');
   return `Lịch thi công ${weekday} / ${dd} / ${mm} - BỘ PHẬN QUẢNG CÁO`;
+}
+
+function constructionRowToneClass(mark: Task['constructionMark']) {
+  if (mark === 'completed') return 'bg-emerald-50/95 hover:bg-emerald-50';
+  if (mark === 'incomplete') return 'bg-rose-50/95 hover:bg-rose-50';
+  return 'odd:bg-slate-50/40 hover:bg-slate-50';
+}
+
+function ConstructionJobButtons({
+  task,
+  onComplete,
+  onIncomplete,
+}: {
+  task: Task;
+  onComplete: (t: Task) => void;
+  onIncomplete: (t: Task) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-1.5 min-w-[7.5rem]">
+      <button
+        type="button"
+        onClick={() => onComplete(task)}
+        className={cn(
+          'px-2 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-wider border transition-all shadow-sm',
+          task.constructionMark === 'completed'
+            ? 'bg-emerald-600 text-white border-emerald-700'
+            : 'bg-white text-emerald-800 border-emerald-300 hover:bg-emerald-50',
+        )}
+      >
+        Hoàn thành
+      </button>
+      <button
+        type="button"
+        onClick={() => onIncomplete(task)}
+        className={cn(
+          'px-2 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-wider border transition-all shadow-sm',
+          task.constructionMark === 'incomplete'
+            ? 'bg-rose-600 text-white border-rose-700'
+            : 'bg-white text-rose-800 border-rose-300 hover:bg-rose-50',
+        )}
+      >
+        Chưa hoàn thành
+      </button>
+    </div>
+  );
 }
 
 export default function App() {
@@ -373,6 +432,33 @@ export default function App() {
     });
     // Open editor so user can adjust quickly
     startEditTask(copy);
+  };
+
+  const markConstructionCompleted = (task: Task) => {
+    const updated: Task = { ...task, constructionMark: 'completed' };
+    setTasks((prev) => prev.map((t) => (t.id === task.id ? updated : t)));
+    appendEvent({
+      entity: 'tasks',
+      action: 'upsert',
+      payload: updated,
+      clientId,
+    });
+  };
+
+  const markConstructionIncomplete = (task: Task) => {
+    const updated: Task = {
+      ...task,
+      constructionMark: 'incomplete',
+      dueDate: addDaysIso(task.dueDate, 1),
+      title: appendTiepTheoTitle(task.title || ''),
+    };
+    setTasks((prev) => prev.map((t) => (t.id === task.id ? updated : t)));
+    appendEvent({
+      entity: 'tasks',
+      action: 'upsert',
+      payload: updated,
+      clientId,
+    });
   };
 
   const importJson = async (file: File) => {
@@ -1325,7 +1411,14 @@ export default function App() {
                       key={t.id}
                       className="py-3 first:pt-0 last:pb-0"
                     >
-                      <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">
+                      <div
+                        className={cn(
+                          'border border-slate-200 rounded-2xl p-4 shadow-sm',
+                          !t.constructionMark && 'bg-white',
+                          t.constructionMark === 'completed' && 'bg-emerald-50/95',
+                          t.constructionMark === 'incomplete' && 'bg-rose-50/95',
+                        )}
+                      >
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
                           <div className="text-[10px] font-black text-slate-500 uppercase tracking-[0.22em]">
@@ -1347,6 +1440,17 @@ export default function App() {
                         <Field label="Liên hệ" value={t.contact} />
                         <Field label="Nơi làm việc" value={t.workplace} />
                         <Field label="Nhân lực" value={t.manpower} valueClassName="text-rose-600" />
+                      </div>
+
+                      <div className="mt-4">
+                        <div className="text-[10px] font-black text-slate-500 uppercase tracking-[0.22em] mb-2">
+                          Trạng thái
+                        </div>
+                        <ConstructionJobButtons
+                          task={t}
+                          onComplete={markConstructionCompleted}
+                          onIncomplete={markConstructionIncomplete}
+                        />
                       </div>
 
                       {isAdmin && (
@@ -1387,20 +1491,21 @@ export default function App() {
                       <th className="px-6 py-3 border-r border-slate-200">Liên hệ</th>
                       <th className="px-6 py-3 border-r border-slate-200">Nơi làm việc</th>
                       <th className="px-6 py-3 border-r border-slate-200">Nhân lực</th>
-                      <th className="px-6 py-3">Xe</th>
+                      <th className="px-6 py-3 border-r border-slate-200">Xe</th>
+                      <th className="px-4 py-3 w-[9.5rem] text-center">Trạng thái</th>
                       {isAdmin && <th className="px-6 py-3 w-44 text-right">Thao tác</th>}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200">
                     {construction.length === 0 ? (
                       <tr>
-                        <td colSpan={isAdmin ? 7 : 6} className="px-6 py-10 text-center text-slate-500 italic">
+                        <td colSpan={isAdmin ? 8 : 7} className="px-6 py-10 text-center text-slate-500 italic">
                           Trống
                         </td>
                       </tr>
                     ) : (
                       construction.map((t, idx) => (
-                        <tr key={t.id} className="hover:bg-slate-50 transition-colors odd:bg-slate-50/40">
+                        <tr key={t.id} className={cn('transition-colors', constructionRowToneClass(t.constructionMark))}>
                           <td className="px-4 py-4 border-r border-slate-200 text-center font-mono text-slate-500">
                             {idx + 1}
                           </td>
@@ -1408,7 +1513,16 @@ export default function App() {
                           <td className="px-6 py-4 border-r border-slate-200 text-slate-700">{t.contact || '-'}</td>
                           <td className="px-6 py-4 border-r border-slate-200 text-slate-700">{t.workplace || '-'}</td>
                           <td className="px-6 py-4 border-r border-slate-200 text-rose-600 font-semibold">{t.manpower || '-'}</td>
-                          <td className="px-6 py-4 text-slate-700">{t.vehicle || '-'}</td>
+                          <td className="px-6 py-4 border-r border-slate-200 text-slate-700">{t.vehicle || '-'}</td>
+                          <td className="px-4 py-4 border-r border-slate-200 align-middle text-center">
+                            <div className="inline-flex justify-center">
+                              <ConstructionJobButtons
+                                task={t}
+                                onComplete={markConstructionCompleted}
+                                onIncomplete={markConstructionIncomplete}
+                              />
+                            </div>
+                          </td>
                           {isAdmin && (
                             <td className="px-6 py-4 text-right">
                               <div className="inline-flex gap-2">
