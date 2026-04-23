@@ -187,30 +187,34 @@ function ConstructionJobButtons({
   onIncomplete: (t: Task) => void;
 }) {
   return (
-    <div className="flex flex-col gap-1.5 min-w-[7.5rem]">
+    <div className="flex items-center justify-center gap-2 min-w-[5.5rem]">
       <button
         type="button"
         onClick={() => onComplete(task)}
         className={cn(
-          'px-2 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-wider border transition-all shadow-sm',
+          'px-2.5 py-1 rounded-xl text-[10px] font-black uppercase tracking-wider border transition-all shadow-sm',
           task.constructionMark === 'completed'
             ? 'bg-emerald-600 text-white border-emerald-700'
             : 'bg-white text-emerald-800 border-emerald-300 hover:bg-emerald-50',
         )}
+        aria-label="Hoàn thành"
+        title="Hoàn thành"
       >
-        Hoàn thành
+        Y
       </button>
       <button
         type="button"
         onClick={() => onIncomplete(task)}
         className={cn(
-          'px-2 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-wider border transition-all shadow-sm',
+          'px-2.5 py-1 rounded-xl text-[10px] font-black uppercase tracking-wider border transition-all shadow-sm',
           task.constructionMark === 'incomplete'
             ? 'bg-rose-600 text-white border-rose-700'
             : 'bg-white text-rose-800 border-rose-300 hover:bg-rose-50',
         )}
+        aria-label="Chưa hoàn thành"
+        title="Chưa hoàn thành"
       >
-        Chưa hoàn thành
+        N
       </button>
     </div>
   );
@@ -1486,14 +1490,14 @@ export default function App() {
                 <table className="w-full text-left text-sm border-collapse">
                   <thead>
                     <tr className="bg-emerald-500/15 text-[10px] font-black uppercase tracking-[0.2em] text-emerald-700">
-                      <th className="px-4 py-3 border-r border-slate-200 w-12 text-center">TT</th>
-                      <th className="px-6 py-3 border-r border-slate-200">Nội dung công việc</th>
-                      <th className="px-6 py-3 border-r border-slate-200">Liên hệ</th>
-                      <th className="px-6 py-3 border-r border-slate-200">Nơi làm việc</th>
-                      <th className="px-6 py-3 border-r border-slate-200">Nhân lực</th>
-                      <th className="px-6 py-3 border-r border-slate-200">Xe</th>
-                      <th className="px-4 py-3 w-[9.5rem] text-center">Trạng thái</th>
-                      {isAdmin && <th className="px-6 py-3 w-44 text-right">Thao tác</th>}
+                      <th className="px-4 py-2 border-r border-slate-200 w-12 text-center">TT</th>
+                      <th className="px-6 py-2 border-r border-slate-200">Nội dung công việc</th>
+                      <th className="px-6 py-2 border-r border-slate-200">Liên hệ</th>
+                      <th className="px-6 py-2 border-r border-slate-200">Nơi làm việc</th>
+                      <th className="px-6 py-2 border-r border-slate-200">Nhân lực</th>
+                      <th className="px-6 py-2 border-r border-slate-200">Xe</th>
+                      <th className="px-4 py-2 w-[9.5rem] text-center">Trạng thái</th>
+                      {isAdmin && <th className="px-6 py-2 w-44 text-right">Thao tác</th>}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200">
@@ -1506,15 +1510,15 @@ export default function App() {
                     ) : (
                       construction.map((t, idx) => (
                         <tr key={t.id} className={cn('transition-colors', constructionRowToneClass(t.constructionMark))}>
-                          <td className="px-4 py-4 border-r border-slate-200 text-center font-mono text-slate-500">
+                          <td className="px-4 py-2 border-r border-slate-200 text-center font-mono text-slate-500">
                             {idx + 1}
                           </td>
-                          <td className="px-6 py-4 border-r border-slate-200 font-bold text-slate-900">{t.title}</td>
-                          <td className="px-6 py-4 border-r border-slate-200 text-slate-700">{t.contact || '-'}</td>
-                          <td className="px-6 py-4 border-r border-slate-200 text-slate-700">{t.workplace || '-'}</td>
-                          <td className="px-6 py-4 border-r border-slate-200 text-rose-600 font-semibold">{t.manpower || '-'}</td>
-                          <td className="px-6 py-4 border-r border-slate-200 text-slate-700">{t.vehicle || '-'}</td>
-                          <td className="px-4 py-4 border-r border-slate-200 align-middle text-center">
+                          <td className="px-6 py-2 border-r border-slate-200 font-bold text-slate-900">{t.title}</td>
+                          <td className="px-6 py-2 border-r border-slate-200 text-slate-700">{t.contact || '-'}</td>
+                          <td className="px-6 py-2 border-r border-slate-200 text-slate-700">{t.workplace || '-'}</td>
+                          <td className="px-6 py-2 border-r border-slate-200 text-rose-600 font-semibold">{t.manpower || '-'}</td>
+                          <td className="px-6 py-2 border-r border-slate-200 text-slate-700">{t.vehicle || '-'}</td>
+                          <td className="px-4 py-2 border-r border-slate-200 align-middle text-center">
                             <div className="inline-flex justify-center">
                               <ConstructionJobButtons
                                 task={t}
@@ -1524,7 +1528,7 @@ export default function App() {
                             </div>
                           </td>
                           {isAdmin && (
-                            <td className="px-6 py-4 text-right">
+                            <td className="px-6 py-2 text-right">
                               <div className="inline-flex gap-2">
                                 <button
                                   onClick={() => startEditTask(t)}
@@ -1613,9 +1617,9 @@ export default function App() {
                         ) : (
                           design.map((t) => (
                             <tr key={t.id} className="hover:bg-slate-50 transition-colors odd:bg-slate-50/40">
-                              <td className="px-6 py-4 text-slate-800 font-medium">{t.title}</td>
+                              <td className="px-6 py-2 text-slate-800 font-medium">{t.title}</td>
                               {isAdmin && (
-                                <td className="px-6 py-4 text-right">
+                                <td className="px-6 py-2 text-right">
                                   <div className="inline-flex gap-2">
                                     <button
                                       onClick={() => startEditTask(t)}
@@ -1703,9 +1707,9 @@ export default function App() {
                         ) : (
                           production.map((t) => (
                             <tr key={t.id} className="hover:bg-slate-50 transition-colors odd:bg-slate-50/40">
-                              <td className="px-6 py-4 text-slate-800 font-medium">{t.title}</td>
+                              <td className="px-6 py-2 text-slate-800 font-medium">{t.title}</td>
                               {isAdmin && (
-                                <td className="px-6 py-4 text-right">
+                                <td className="px-6 py-2 text-right">
                                   <div className="inline-flex gap-2">
                                     <button
                                       onClick={() => startEditTask(t)}
