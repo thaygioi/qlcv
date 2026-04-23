@@ -186,6 +186,7 @@ function ConstructionJobButtons({
   onComplete: (t: Task) => void;
   onIncomplete: (t: Task) => void;
 }) {
+  const mark = task.constructionMark;
   return (
     <div className="flex items-center justify-center gap-2 min-w-[5.5rem]">
       <button
@@ -193,9 +194,11 @@ function ConstructionJobButtons({
         onClick={() => onComplete(task)}
         className={cn(
           'px-2.5 py-1 rounded-xl text-[10px] font-black uppercase tracking-wider border transition-all shadow-sm',
-          task.constructionMark === 'completed'
+          mark === 'completed'
             ? 'bg-emerald-600 text-white border-emerald-700'
-            : 'bg-white text-emerald-800 border-emerald-300 hover:bg-emerald-50',
+            : mark
+              ? 'bg-white text-emerald-800 border-emerald-300 hover:bg-emerald-50'
+              : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50',
         )}
         aria-label="Hoàn thành"
         title="Hoàn thành"
@@ -207,9 +210,11 @@ function ConstructionJobButtons({
         onClick={() => onIncomplete(task)}
         className={cn(
           'px-2.5 py-1 rounded-xl text-[10px] font-black uppercase tracking-wider border transition-all shadow-sm',
-          task.constructionMark === 'incomplete'
+          mark === 'incomplete'
             ? 'bg-rose-600 text-white border-rose-700'
-            : 'bg-white text-rose-800 border-rose-300 hover:bg-rose-50',
+            : mark
+              ? 'bg-white text-rose-800 border-rose-300 hover:bg-rose-50'
+              : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50',
         )}
         aria-label="Chưa hoàn thành"
         title="Chưa hoàn thành"
