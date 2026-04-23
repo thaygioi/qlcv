@@ -168,7 +168,8 @@ function viewerConstructionTitle(dateIso: string) {
   const weekday = new Intl.DateTimeFormat('vi-VN', { weekday: 'long' }).format(d);
   const dd = String(d.getDate()).padStart(2, '0');
   const mm = String(d.getMonth() + 1).padStart(2, '0');
-  return `Lịch thi công ${weekday} / ${dd} / ${mm} - BỘ PHẬN QUẢNG CÁO`;
+  const yyyy = String(d.getFullYear());
+  return `Lịch thi công ${weekday} / ${dd} / ${mm} / ${yyyy} - BỘ PHẬN QUẢNG CÁO`;
 }
 
 function constructionRowToneClass(mark: Task['constructionMark']) {
