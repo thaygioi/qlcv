@@ -12,6 +12,7 @@ export interface Task {
   workplace?: string;
   manpower?: string;
   vehicle?: string;
+  note?: string;
   /** Thi công: đánh dấu từ nhân viên — xanh khi hoàn thành, đỏ khi chưa (kể cả bài lùi ngày). */
   constructionMark?: 'completed' | 'incomplete';
 }

@@ -126,10 +126,11 @@ type NewRow = {
   workplace?: string;
   manpower?: string;
   vehicle?: string;
+  note?: string;
 };
 
 function newRowFor(date: string, category: NewRow['category']): NewRow {
-  return { category, dueDate: date, title: '', contact: '', workplace: '', manpower: '', vehicle: '' };
+  return { category, dueDate: date, title: '', contact: '', workplace: '', manpower: '', vehicle: '', note: '' };
 }
 
 function isoDate(d: Date) {
@@ -170,6 +171,116 @@ function viewerConstructionTitle(dateIso: string) {
   const mm = String(d.getMonth() + 1).padStart(2, '0');
   const yyyy = String(d.getFullYear());
   return `Lịch thi công ${weekday} / ${dd} / ${mm} / ${yyyy} - BỘ PHẬN QUẢNG CÁO`;
+}
+
+function MoveDateModal({
+  task,
+  onMove,
+  onClose,
+}: {
+  task: Task;
+  onMove: (task: Task, newDate: string) => void;
+  onClose: () => void;
+}) {
+  const [date, setDate] = useState(task.dueDate || '');
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative bg-white rounded-3xl shadow-2xl p-6 w-full max-w-sm">
+        <h2 className="text-base font-black text-slate-900 mb-1">Chuyển sang ngày khác</h2>
+        <p className="text-xs text-slate-500 mb-4 truncate">{task.title}</p>
+        <input
+          type="date"
+          value={date}
+          onChange={(e) => setDate(e.target.value)}
+          className="w-full px-4 py-3 rounded-2xl border border-slate-200 text-slate-900 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500/30 mb-4"
+        />
+        <div className="flex gap-2 justify-end">
+          <button
+            onClick={onClose}
+            className="px-5 py-2.5 rounded-2xl border border-slate-200 text-slate-700 text-xs font-black uppercase tracking-widest hover:bg-slate-50"
+          >
+            Hủy
+          </button>
+          <button
+            onClick={() => date && onMove(task, date)}
+            disabled={!date || date === task.dueDate}
+            className="px-5 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white text-xs font-black uppercase tracking-widest"
+          >
+            Chuyển
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ContactAutocomplete({
+  value,
+  onChange,
+  contacts,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  contacts: ContactItem[];
+}) {
+  const [query, setQuery] = useState(value);
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => { setQuery(value); }, [value]);
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, []);
+
+  const filtered = query.trim()
+    ? contacts.filter((c) => {
+        const label = c.phone ? `${c.name} ${c.phone}` : c.name;
+        return label.toLowerCase().includes(query.toLowerCase());
+      })
+    : contacts;
+
+  function select(label: string) {
+    setQuery(label);
+    onChange(label);
+    setOpen(false);
+  }
+
+  return (
+    <div ref={ref} className="relative">
+      <input
+        type="text"
+        value={query}
+        onChange={(e) => { setQuery(e.target.value); onChange(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)}
+        placeholder="Tìm liên hệ..."
+        className="w-full px-4 py-3 rounded-2xl bg-white border border-slate-200 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+      />
+      {open && filtered.length > 0 && (
+        <ul className="absolute z-50 mt-1 w-full max-h-52 overflow-y-auto bg-white border border-slate-200 rounded-2xl shadow-lg py-1">
+          {filtered.map((c) => {
+            const label = c.phone ? `${c.name} ${c.phone}` : c.name;
+            return (
+              <li
+                key={c.id}
+                onMouseDown={() => select(label)}
+                className="px-4 py-2 cursor-pointer hover:bg-indigo-50 text-slate-800 text-sm"
+              >
+                <span className="font-semibold">{c.name}</span>
+                {c.phone && <span className="ml-2 text-slate-400 text-xs">{c.phone}</span>}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
 }
 
 function constructionRowToneClass(mark: Task['constructionMark']) {
@@ -236,6 +347,7 @@ export default function App() {
 
   const [adding, setAdding] = useState<NewRow | null>(null);
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
+  const [movingTask, setMovingTask] = useState<Task | null>(null);
   const [isLoginOpen, setIsLoginOpen] = useState(false);
   const [loginUsername, setLoginUsername] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
@@ -376,6 +488,7 @@ export default function App() {
       workplace: adding.workplace?.trim() || undefined,
       manpower: adding.manpower?.trim() || undefined,
       vehicle: adding.vehicle?.trim() || undefined,
+      note: adding.note?.trim() || undefined,
     };
 
     setTasks((prev) => {
@@ -407,6 +520,7 @@ export default function App() {
       workplace: task.workplace || '',
       manpower: task.manpower || '',
       vehicle: task.vehicle || '',
+      note: task.note || '',
     });
   };
 
@@ -442,6 +556,13 @@ export default function App() {
     });
     // Open editor so user can adjust quickly
     startEditTask(copy);
+  };
+
+  const moveTask = (task: Task, newDate: string) => {
+    const updated: Task = { ...task, dueDate: newDate };
+    setTasks((prev) => prev.map((t) => (t.id === task.id ? updated : t)));
+    appendEvent({ entity: 'tasks', action: 'upsert', payload: updated, clientId });
+    setMovingTask(null);
   };
 
   const markConstructionCompleted = (task: Task) => {
@@ -1106,52 +1227,52 @@ export default function App() {
     <div className="min-h-screen text-slate-900">
       <div className="sticky top-0 z-20 border-b border-slate-200/80 bg-white/70 backdrop-blur-xl">
         <div className="max-w-6xl mx-auto px-4 py-4 md:px-8">
-          <div className="flex items-start md:items-center justify-between gap-4">
+          {/* Row 1: title + login/logout */}
+          <div className="flex items-center justify-between gap-2">
             <div className="min-w-0">
               <h1 className="text-base md:text-xl font-black tracking-tight truncate">Lịch sản xuất thi công</h1>
               <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.32em] mt-0.5 truncate">
                 Bộ phận quảng cáo
               </p>
             </div>
-
-            <div className="flex flex-nowrap items-center justify-end gap-2 overflow-x-auto max-w-full">
-              <div className="flex items-center gap-2 bg-white p-2 rounded-2xl border border-slate-200 shadow-sm shrink-0">
-                <Calendar className="w-4 h-4 text-slate-500" />
-                <input
-                  type="date"
-                  value={selectedDate}
-                  onChange={(e) => setSelectedDate(e.target.value)}
-                  className="px-2 py-2 rounded-xl text-sm font-semibold bg-white border border-slate-200 text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
-                />
-              </div>
+            {isAdmin ? (
               <button
-                onClick={() => setSelectedDate(todayIso)}
-                className={cn(
-                  'inline-flex items-center gap-2 bg-white hover:bg-slate-50 border border-slate-200 text-slate-900 rounded-2xl px-3 py-2 md:px-4 md:py-3 text-xs font-bold transition-all shadow-sm shrink-0',
-                  selectedDate === todayIso && 'border-indigo-200 bg-indigo-50 text-indigo-700'
-                )}
+                onClick={logout}
+                className="inline-flex items-center gap-2 bg-white hover:bg-slate-50 border border-slate-200 text-slate-900 rounded-2xl px-3 py-2 md:px-4 md:py-3 text-xs font-bold transition-all shadow-sm shrink-0"
               >
-                Hôm nay
+                <LogOut className="w-4 h-4 text-slate-500" />
+                <span>Đăng xuất</span>
               </button>
-
-              {isAdmin ? (
-                <button
-                  onClick={logout}
-                  className="inline-flex items-center gap-2 bg-white hover:bg-slate-50 border border-slate-200 text-slate-900 rounded-2xl px-3 py-2 md:px-4 md:py-3 text-xs font-bold transition-all shadow-sm shrink-0"
-                >
-                  <LogOut className="w-4 h-4 text-slate-500" />
-                  <span>Đăng xuất</span>
-                </button>
-              ) : (
-                <button
-                  onClick={openLogin}
-                  className="inline-flex items-center gap-2 bg-white hover:bg-slate-50 border border-slate-200 text-slate-900 rounded-2xl px-3 py-2 md:px-4 md:py-3 text-xs font-bold transition-all shadow-sm shrink-0"
-                >
-                  <LogIn className="w-4 h-4 text-slate-500" />
-                  <span>Đăng nhập</span>
-                </button>
-              )}
+            ) : (
+              <button
+                onClick={openLogin}
+                className="inline-flex items-center gap-2 bg-white hover:bg-slate-50 border border-slate-200 text-slate-900 rounded-2xl px-3 py-2 md:px-4 md:py-3 text-xs font-bold transition-all shadow-sm shrink-0"
+              >
+                <LogIn className="w-4 h-4 text-slate-500" />
+                <span>Đăng nhập</span>
+              </button>
+            )}
+          </div>
+          {/* Row 2: date picker + hôm nay */}
+          <div className="flex items-center gap-2 mt-3">
+            <div className="flex items-center gap-2 bg-white px-3 py-2 rounded-2xl border border-slate-200 shadow-sm flex-1">
+              <Calendar className="w-4 h-4 text-slate-500 shrink-0" />
+              <input
+                type="date"
+                value={selectedDate}
+                onChange={(e) => setSelectedDate(e.target.value)}
+                className="flex-1 min-w-0 text-sm font-semibold bg-white text-slate-900 focus:outline-none"
+              />
             </div>
+            <button
+              onClick={() => setSelectedDate(todayIso)}
+              className={cn(
+                'inline-flex items-center gap-2 bg-white hover:bg-slate-50 border border-slate-200 text-slate-900 rounded-2xl px-3 py-2 md:px-4 md:py-3 text-xs font-bold transition-all shadow-sm shrink-0',
+                selectedDate === todayIso && 'border-indigo-200 bg-indigo-50 text-indigo-700'
+              )}
+            >
+              Hôm nay
+            </button>
           </div>
 
           {(!isAdmin || adminView === 'schedule') && <WeekPicker />}
@@ -1294,55 +1415,55 @@ export default function App() {
               </div>
 
               {adding.category === 'construction' && (
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mt-3">
-                  <div className="space-y-1">
-                    <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Liên hệ</div>
-                    <select
-                      value={adding.contact ?? ''}
-                      onChange={(e) => setAdding((p) => (p ? { ...p, contact: e.target.value } : p))}
-                      className="w-full px-4 py-3 rounded-2xl bg-white border border-slate-200 text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-                    >
-                      <option value="">-</option>
-                      {contacts.map((c) => {
-                        const label = c.phone ? `${c.name} ${c.phone}` : c.name;
-                        return (
-                          <option key={c.id} value={label}>
-                            {label}
+                <>
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mt-3">
+                    <div className="space-y-1">
+                      <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Liên hệ</div>
+                      <ContactAutocomplete
+                        value={adding.contact ?? ''}
+                        onChange={(v) => setAdding((p) => (p ? { ...p, contact: v } : p))}
+                        contacts={contacts}
+                      />
+                    </div>
+                    <input
+                      value={adding.workplace ?? ''}
+                      onChange={(e) => setAdding((p) => (p ? { ...p, workplace: e.target.value } : p))}
+                      placeholder="Nơi làm việc"
+                      className="px-4 py-3 rounded-2xl bg-white border border-slate-200 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                    />
+                    <div className="space-y-1">
+                      <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Nhân lực</div>
+                      <MultiManpowerPicker
+                        value={adding.manpower ?? ''}
+                        employees={employees}
+                        onChange={(next) => setAdding((p) => (p ? { ...p, manpower: next } : p))}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Xe</div>
+                      <select
+                        value={adding.vehicle ?? ''}
+                        onChange={(e) => setAdding((p) => (p ? { ...p, vehicle: e.target.value } : p))}
+                        className="w-full px-4 py-3 rounded-2xl bg-white border border-slate-200 text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                      >
+                        <option value="">-</option>
+                        {vehicles.map((v) => (
+                          <option key={v} value={v}>
+                            {v}
                           </option>
-                        );
-                      })}
-                    </select>
+                        ))}
+                      </select>
+                    </div>
                   </div>
-                  <input
-                    value={adding.workplace ?? ''}
-                    onChange={(e) => setAdding((p) => (p ? { ...p, workplace: e.target.value } : p))}
-                    placeholder="Nơi làm việc"
-                    className="px-4 py-3 rounded-2xl bg-white border border-slate-200 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-                  />
-                  <div className="space-y-1">
-                    <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Nhân lực</div>
-                    <MultiManpowerPicker
-                      value={adding.manpower ?? ''}
-                      employees={employees}
-                      onChange={(next) => setAdding((p) => (p ? { ...p, manpower: next } : p))}
+                  <div className="mt-3">
+                    <input
+                      value={adding.note ?? ''}
+                      onChange={(e) => setAdding((p) => (p ? { ...p, note: e.target.value } : p))}
+                      placeholder="Ghi chú..."
+                      className="w-full px-4 py-3 rounded-2xl bg-white border border-slate-200 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
                     />
                   </div>
-                  <div className="space-y-1">
-                    <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Xe</div>
-                    <select
-                      value={adding.vehicle ?? ''}
-                      onChange={(e) => setAdding((p) => (p ? { ...p, vehicle: e.target.value } : p))}
-                      className="w-full px-4 py-3 rounded-2xl bg-white border border-slate-200 text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-                    >
-                      <option value="">-</option>
-                      {vehicles.map((v) => (
-                        <option key={v} value={v}>
-                          {v}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
+                </>
               )}
 
               <div className="mt-4 flex gap-3 justify-end">
@@ -1450,32 +1571,22 @@ export default function App() {
                         <Field label="Liên hệ" value={t.contact} />
                         <Field label="Nơi làm việc" value={t.workplace} />
                         <Field label="Nhân lực" value={t.manpower} valueClassName="text-rose-600" />
-                      </div>
-
-                      <div className="mt-4">
-                        <div className="text-[10px] font-black text-slate-500 uppercase tracking-[0.22em] mb-2">
-                          Trạng thái
-                        </div>
-                        <ConstructionJobButtons
-                          task={t}
-                          onComplete={markConstructionCompleted}
-                          onIncomplete={markConstructionIncomplete}
-                        />
+                        {t.note && <Field label="Ghi chú" value={t.note} />}
                       </div>
 
                       {isAdmin && (
-                        <div className="mt-4 flex items-center justify-end gap-2">
+                        <div className="mt-4 flex items-center justify-end gap-2 flex-wrap">
+                          <button
+                            onClick={() => setMovingTask(t)}
+                            className="px-4 py-2 rounded-2xl bg-white hover:bg-slate-50 border border-slate-200 text-indigo-600 text-[10px] font-black uppercase tracking-widest"
+                          >
+                            Chuyển
+                          </button>
                           <button
                             onClick={() => startEditTask(t)}
                             className="px-4 py-2 rounded-2xl bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 text-[10px] font-black uppercase tracking-widest"
                           >
                             Sửa
-                          </button>
-                          <button
-                            onClick={() => duplicateTask(t)}
-                            className="px-4 py-2 rounded-2xl bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 text-[10px] font-black uppercase tracking-widest"
-                          >
-                            Nhân bản
                           </button>
                           <button
                             onClick={() => deleteTask(t.id)}
@@ -1500,9 +1611,9 @@ export default function App() {
                       <th className="px-6 py-2 border-r border-slate-200">Nội dung công việc</th>
                       <th className="px-6 py-2 border-r border-slate-200">Liên hệ</th>
                       <th className="px-6 py-2 border-r border-slate-200">Nơi làm việc</th>
-                      <th className="px-6 py-2 border-r border-slate-200">Nhân lực</th>
+                      <th className="px-6 py-2 border-r border-slate-200 text-center">Nhân lực</th>
                       <th className="px-6 py-2 border-r border-slate-200">Xe</th>
-                      <th className="px-4 py-2 w-[9.5rem] text-center">Trạng thái</th>
+                      <th className="px-6 py-2 border-r border-slate-200">Ghi chú</th>
                       {isAdmin && <th className="px-6 py-2 w-44 text-right">Thao tác</th>}
                     </tr>
                   </thead>
@@ -1522,31 +1633,23 @@ export default function App() {
                           <td className="px-6 py-2 border-r border-slate-200 font-bold text-slate-900">{t.title}</td>
                           <td className="px-6 py-2 border-r border-slate-200 text-slate-700">{t.contact || '-'}</td>
                           <td className="px-6 py-2 border-r border-slate-200 text-slate-700">{t.workplace || '-'}</td>
-                          <td className="px-6 py-2 border-r border-slate-200 text-rose-600 font-semibold">{t.manpower || '-'}</td>
+                          <td className="px-6 py-2 border-r border-slate-200 text-rose-600 font-semibold text-center">{t.manpower || '-'}</td>
                           <td className="px-6 py-2 border-r border-slate-200 text-slate-700">{t.vehicle || '-'}</td>
-                          <td className="px-4 py-2 border-r border-slate-200 align-middle text-center">
-                            <div className="inline-flex justify-center">
-                              <ConstructionJobButtons
-                                task={t}
-                                onComplete={markConstructionCompleted}
-                                onIncomplete={markConstructionIncomplete}
-                              />
-                            </div>
-                          </td>
+                          <td className="px-6 py-2 border-r border-slate-200 text-slate-600 italic text-xs">{t.note || ''}</td>
                           {isAdmin && (
                             <td className="px-6 py-2 text-right">
                               <div className="inline-flex gap-2">
+                                <button
+                                  onClick={() => setMovingTask(t)}
+                                  className="px-4 py-2 rounded-2xl bg-white hover:bg-slate-50 border border-slate-200 text-indigo-600 text-[10px] font-black uppercase tracking-widest"
+                                >
+                                  Chuyển
+                                </button>
                                 <button
                                   onClick={() => startEditTask(t)}
                                   className="px-4 py-2 rounded-2xl bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 text-[10px] font-black uppercase tracking-widest"
                                 >
                                   Sửa
-                                </button>
-                                <button
-                                  onClick={() => duplicateTask(t)}
-                                  className="px-4 py-2 rounded-2xl bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 text-[10px] font-black uppercase tracking-widest"
-                                >
-                                  Nhân bản
                                 </button>
                                 <button
                                   onClick={() => deleteTask(t.id)}
@@ -1585,18 +1688,18 @@ export default function App() {
                               <div className="text-sm font-black text-slate-900 mt-1 break-words">{t.title}</div>
                             </div>
                             {isAdmin && (
-                              <div className="shrink-0 flex items-center gap-2">
+                              <div className="shrink-0 flex items-center gap-2 flex-wrap justify-end">
+                                <button
+                                  onClick={() => setMovingTask(t)}
+                                  className="px-4 py-2 rounded-2xl bg-white hover:bg-slate-50 border border-slate-200 text-indigo-600 text-[10px] font-black uppercase tracking-widest"
+                                >
+                                  Chuyển
+                                </button>
                                 <button
                                   onClick={() => startEditTask(t)}
                                   className="px-4 py-2 rounded-2xl bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 text-[10px] font-black uppercase tracking-widest"
                                 >
                                   Sửa
-                                </button>
-                                <button
-                                  onClick={() => duplicateTask(t)}
-                                  className="px-4 py-2 rounded-2xl bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 text-[10px] font-black uppercase tracking-widest"
-                                >
-                                  Nhân bản
                                 </button>
                                 <button
                                   onClick={() => deleteTask(t.id)}
@@ -1628,16 +1731,16 @@ export default function App() {
                                 <td className="px-6 py-2 text-right">
                                   <div className="inline-flex gap-2">
                                     <button
+                                      onClick={() => setMovingTask(t)}
+                                      className="px-4 py-2 rounded-2xl bg-white hover:bg-slate-50 border border-slate-200 text-indigo-600 text-[10px] font-black uppercase tracking-widest"
+                                    >
+                                      Chuyển
+                                    </button>
+                                    <button
                                       onClick={() => startEditTask(t)}
                                       className="px-4 py-2 rounded-2xl bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 text-[10px] font-black uppercase tracking-widest"
                                     >
                                       Sửa
-                                    </button>
-                                    <button
-                                      onClick={() => duplicateTask(t)}
-                                      className="px-4 py-2 rounded-2xl bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 text-[10px] font-black uppercase tracking-widest"
-                                    >
-                                      Nhân bản
                                     </button>
                                     <button
                                       onClick={() => deleteTask(t.id)}
@@ -1675,18 +1778,18 @@ export default function App() {
                               <div className="text-sm font-black text-slate-900 mt-1 break-words">{t.title}</div>
                             </div>
                             {isAdmin && (
-                              <div className="shrink-0 flex items-center gap-2">
+                              <div className="shrink-0 flex items-center gap-2 flex-wrap justify-end">
+                                <button
+                                  onClick={() => setMovingTask(t)}
+                                  className="px-4 py-2 rounded-2xl bg-white hover:bg-slate-50 border border-slate-200 text-indigo-600 text-[10px] font-black uppercase tracking-widest"
+                                >
+                                  Chuyển
+                                </button>
                                 <button
                                   onClick={() => startEditTask(t)}
                                   className="px-4 py-2 rounded-2xl bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 text-[10px] font-black uppercase tracking-widest"
                                 >
                                   Sửa
-                                </button>
-                                <button
-                                  onClick={() => duplicateTask(t)}
-                                  className="px-4 py-2 rounded-2xl bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 text-[10px] font-black uppercase tracking-widest"
-                                >
-                                  Nhân bản
                                 </button>
                                 <button
                                   onClick={() => deleteTask(t.id)}
@@ -1718,16 +1821,16 @@ export default function App() {
                                 <td className="px-6 py-2 text-right">
                                   <div className="inline-flex gap-2">
                                     <button
+                                      onClick={() => setMovingTask(t)}
+                                      className="px-4 py-2 rounded-2xl bg-white hover:bg-slate-50 border border-slate-200 text-indigo-600 text-[10px] font-black uppercase tracking-widest"
+                                    >
+                                      Chuyển
+                                    </button>
+                                    <button
                                       onClick={() => startEditTask(t)}
                                       className="px-4 py-2 rounded-2xl bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 text-[10px] font-black uppercase tracking-widest"
                                     >
                                       Sửa
-                                    </button>
-                                    <button
-                                      onClick={() => duplicateTask(t)}
-                                      className="px-4 py-2 rounded-2xl bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 text-[10px] font-black uppercase tracking-widest"
-                                    >
-                                      Nhân bản
                                     </button>
                                     <button
                                       onClick={() => deleteTask(t.id)}
@@ -1750,6 +1853,11 @@ export default function App() {
           </>
         )}
       </div>
+
+      {/* Move date modal */}
+      {movingTask && (
+        <MoveDateModal task={movingTask} onMove={moveTask} onClose={() => setMovingTask(null)} />
+      )}
 
       {/* Login modal */}
       {isLoginOpen && !isAdmin && (
